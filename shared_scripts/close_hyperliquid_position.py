@@ -44,6 +44,9 @@ from datetime import datetime, timezone
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "platforms", "hyperliquid"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "shared_tools"))
+
+from hl_user_fills import apply_user_fills_lookup
 
 
 def main():
@@ -178,12 +181,10 @@ def main():
     if fill.get("oid"):
         try:
             lookup = adapter.lookup_fill_fee_by_oid(fill["oid"], fills_since_ms)
-            if lookup:
-                fill["fee"] = lookup.get("fee", 0.0)
-                if "closed_pnl" in lookup:
-                    fill["closed_pnl"] = lookup["closed_pnl"]
-            else:
+            if not lookup:
                 print(f"[WARN] userFills lookup returned no fills for oid={fill['oid']}", file=sys.stderr)
+            elif not apply_user_fills_lookup(fill, lookup):
+                print(f"[WARN] userFills lookup returned malformed fill data for oid={fill['oid']}", file=sys.stderr)
         except Exception as fe:
             print(f"[WARN] userFills lookup failed for oid={fill['oid']}: {fe}", file=sys.stderr)
     _emit_success(args.symbol, fill, cancel_err=cancel_err, cancel_succeeded=cancel_succeeded)

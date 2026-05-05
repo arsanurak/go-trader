@@ -57,6 +57,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared_strateg
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared_tools'))
 
 from atr import ensure_atr_indicator, latest_atr
+from hl_user_fills import apply_user_fills_lookup
 from regime import latest_regime
 
 
@@ -452,12 +453,10 @@ def run_execute(symbol, side, size, mode, stop_loss_pct=0.0, cancel_oid=0, prev_
         if fill.get("oid"):
             try:
                 lookup = adapter.lookup_fill_fee_by_oid(fill["oid"], fills_since_ms)
-                if lookup:
-                    fill["fee"] = lookup.get("fee", 0.0)
-                    if "closed_pnl" in lookup:
-                        fill["closed_pnl"] = lookup["closed_pnl"]
-                else:
+                if not lookup:
                     print(f"[WARN] userFills lookup returned no fills for oid={fill['oid']}", file=sys.stderr)
+                elif not apply_user_fills_lookup(fill, lookup):
+                    print(f"[WARN] userFills lookup returned malformed fill data for oid={fill['oid']}", file=sys.stderr)
             except Exception as fe:
                 print(f"[WARN] userFills lookup failed for oid={fill['oid']}: {fe}", file=sys.stderr)
 
