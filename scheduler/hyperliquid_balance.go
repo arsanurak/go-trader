@@ -228,7 +228,22 @@ func fetchHyperliquidState(accountAddress string) (float64, []HLPosition, error)
 // It updates or removes the position for the given symbol based on ownership.
 // Does NOT sync cash (each strategy manages its own virtual cash).
 // Returns true if any state was changed. Must be called under Lock.
-func reconcileHyperliquidPositions(stratState *StrategyState, sym string, positions []HLPosition, logger *StrategyLogger) bool {
+//
+// accountAddress is used to resolve the on-chain fill fee via userFills when
+// the reconciler detects an external close (#588). Empty disables the
+// lookup — the close still books with the modeled fee. This entry point
+// performs the lookup synchronously; production reconcile paths build a
+// cached resolver outside the lock and call
+// reconcileHyperliquidPositionsWithResolver.
+func reconcileHyperliquidPositions(stratState *StrategyState, sym string, positions []HLPosition, accountAddress string, logger *StrategyLogger) bool {
+	return reconcileHyperliquidPositionsWithResolver(stratState, sym, positions, directHyperliquidReconcileFillResolver(accountAddress), logger)
+}
+
+// reconcileHyperliquidPositionsWithResolver is the resolver-aware variant. The
+// resolver is expected to do pure in-memory cache reads when called under
+// mu.Lock() (see buildCachedHyperliquidReconcileFillResolver) — never make
+// HTTP calls.
+func reconcileHyperliquidPositionsWithResolver(stratState *StrategyState, sym string, positions []HLPosition, resolveFee hlReconcileFillResolver, logger *StrategyLogger) bool {
 	changed := false
 
 	// Find the on-chain position for this strategy's symbol.
@@ -284,7 +299,10 @@ func reconcileHyperliquidPositions(stratState *StrategyState, sym string, positi
 		logger.Info("hl-sync: %s position (%.6f %s) no longer on-chain, removing",
 			sym, statePos.Quantity, statePos.Side)
 		if statePos.StopLossOID > 0 && statePos.StopLossTriggerPx > 0 {
-			if recordPerpsStopLossClose(stratState, sym, statePos.StopLossTriggerPx, "stop_loss", logger) {
+			lookup, useFillFee := resolveFee(sym, statePos.StopLossOID, statePos.Quantity)
+			oidStr := strconv.FormatInt(statePos.StopLossOID, 10)
+			logHyperliquidReconcileFillLookup(logger, sym, statePos.StopLossOID, statePos.Quantity, lookup, useFillFee)
+			if recordPerpsStopLossCloseWithFillFee(stratState, sym, statePos.StopLossTriggerPx, lookup.Fee, useFillFee, oidStr, "stop_loss", logger) {
 				return true
 			}
 		}
@@ -332,7 +350,7 @@ func syncHyperliquidAccountPositions(hlStrategies []StrategyConfig, state *AppSt
 	// Self-contained entry: due and all are the same list. Prices are
 	// unavailable in this path (caller did not pre-fetch); external-close
 	// PnL falls back to zero (legacy behavior pre-#584).
-	return reconcileHyperliquidAccountPositions(hlStrategies, hlStrategies, state, mu, logMgr, positions, nil)
+	return reconcileHyperliquidAccountPositions(hlStrategies, hlStrategies, state, mu, logMgr, positions, nil, accountAddr)
 }
 
 // reconcileHyperliquidAccountPositions reconciles pre-fetched on-chain positions
@@ -350,8 +368,19 @@ func syncHyperliquidAccountPositions(hlStrategies []StrategyConfig, state *AppSt
 // mark is used as the approximate close price so realized PnL can be credited
 // to s.Cash (#584). Pass nil to fall back to the legacy zero-PnL recording.
 //
+// accountAddress is the HL account whose userFills are queried for real
+// exchange fees on closes detected by the reconciler (#588). Pass an empty
+// string to skip the lookup — closes still book correctly using the
+// modeled fee.
+//
 // Must be called WITHOUT holding any lock; acquires Lock internally.
-func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []StrategyConfig, state *AppState, mu *sync.RWMutex, logMgr *LogManager, positions []HLPosition, prices map[string]float64) bool {
+func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []StrategyConfig, state *AppState, mu *sync.RWMutex, logMgr *LogManager, positions []HLPosition, prices map[string]float64, accountAddress string) bool {
+	// Resolve userFills BEFORE taking mu.Lock(): each lookup can sleep up
+	// to ~1.5s on indexer-lag retries, and holding the write lock blocks
+	// every reader of state (/status, /health, per-strategy phase RLocks).
+	// The resolver itself is a pure map read inside the locked region.
+	resolveFee := buildCachedHyperliquidReconcileFillResolver(accountAddress, allStrategies, state, mu, positions)
+
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -396,7 +425,7 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 			fmt.Printf("[ERROR] hl-sync: logger for %s: %v\n", sc.ID, err)
 			continue
 		}
-		if reconcileHyperliquidPositions(ss, sym, positions, logger) {
+		if reconcileHyperliquidPositionsWithResolver(ss, sym, positions, resolveFee, logger) {
 			changed = true
 		}
 	}
@@ -490,6 +519,16 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 		// through to the gap-recording block unchanged.
 		if math.Abs(onChainQty) < 1e-6 && math.Abs(virtualQty) > 1e-6 {
 			// Detector 1: everything gone on-chain — close all peers.
+			//
+			// Fee-lookup caveat for the multi-peer case: a single aggregated
+			// UI close produces one userFills row sized at the *aggregate*
+			// quantity, while each non-owner peer here queries with its own
+			// per-strategy pos.Quantity. The hlReconcileFillSizeTolerance
+			// (1e-4) won't accept that mismatch, so peers fall back to the
+			// modeled fee. The OID-keyed lookup still works for the SL owner.
+			// Per-peer fee accuracy is only achievable when each peer's qty
+			// happens to equal the aggregate close size (e.g. a sole-peer
+			// close, or a closer that happened to size at one peer's qty).
 			for _, id := range stratIDs {
 				ss := state.Strategies[id]
 				if ss == nil {
@@ -504,10 +543,13 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 					fmt.Printf("[ERROR] hl-sync: logger for %s: %v\n", id, logErr)
 				}
 				if pos.StopLossOID > 0 && pos.StopLossTriggerPx > 0 {
-					if recordPerpsStopLossClose(ss, coin, pos.StopLossTriggerPx, "hl_sync_stop_loss", logger) {
+					lookup, useFillFee := resolveFee(coin, pos.StopLossOID, pos.Quantity)
+					oidStr := strconv.FormatInt(pos.StopLossOID, 10)
+					logHyperliquidReconcileFillLookup(logger, coin, pos.StopLossOID, pos.Quantity, lookup, useFillFee)
+					if recordPerpsStopLossCloseWithFillFee(ss, coin, pos.StopLossTriggerPx, lookup.Fee, useFillFee, oidStr, "hl_sync_stop_loss", logger) {
 						changed = true
 					}
-				} else if mark, ok := prices[coin]; ok && mark > 0 && recordPerpsExternalClose(ss, coin, mark, "hl_sync_external", logger) {
+				} else if mark, ok := prices[coin]; ok && mark > 0 {
 					// #584: credit s.Cash with mark-based PnL so the per-strategy
 					// PortfolioValue (and the summary TOTAL) match the real HL
 					// account after an external close. The mark is fetched at
@@ -516,7 +558,11 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 					// minutes earlier). Do not treat the resulting Trade /
 					// ClosedPosition rows as authoritative for tax or reporting;
 					// they exist to keep cash bookkeeping in sync.
-					changed = true
+					lookup, useFillFee := resolveFee(coin, 0, pos.Quantity)
+					logHyperliquidReconcileFillLookup(logger, coin, 0, pos.Quantity, lookup, useFillFee)
+					if recordPerpsExternalCloseWithFillFee(ss, coin, mark, lookup.Fee, useFillFee, "", "hl_sync_external", logger) {
+						changed = true
+					}
 				} else {
 					// No mark price available — fall back to recording the
 					// close with zero PnL. s.Cash will be stale until the
@@ -570,7 +616,10 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 						if logErr != nil {
 							fmt.Printf("[ERROR] hl-sync: logger for %s: %v\n", slOwnerID, logErr)
 						}
-						if recordPerpsStopLossClose(ownerSS, coin, slOwnerPos.StopLossTriggerPx, "hl_sync_stop_loss", logger) {
+						lookup, useFillFee := resolveFee(coin, slOwnerPos.StopLossOID, slOwnerPos.Quantity)
+						oidStr := strconv.FormatInt(slOwnerPos.StopLossOID, 10)
+						logHyperliquidReconcileFillLookup(logger, coin, slOwnerPos.StopLossOID, slOwnerPos.Quantity, lookup, useFillFee)
+						if recordPerpsStopLossCloseWithFillFee(ownerSS, coin, slOwnerPos.StopLossTriggerPx, lookup.Fee, useFillFee, oidStr, "hl_sync_stop_loss", logger) {
 							changed = true
 							virtualQty = expectedResidual
 							delta = virtualQty - onChainQty
