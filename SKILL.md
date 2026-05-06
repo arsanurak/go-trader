@@ -232,13 +232,15 @@ When in doubt, treat as runtime default and prompt. Regenerate from `git log --o
 - **HL SL size capped at on-chain qty (#621/#622)** — `hlSLEffectiveQty` caps stop-loss placement at `min(virtualQty, onChainQty)` to prevent rejected oversized orders after a manual TP; reconciler SL-close uses actual `FilledQty` from `userFills` for PnL/cash (was: stale virtual qty)
 - **Trade SL/TP stamp on arm + protection-sync (#624/#625/#631)** — `trades.stop_loss_trigger_px`/`entry_atr` now backfill the moment `StopLossTriggerPx` arms (paper + live) and again after `applyHyperliquidProtectionSync` (TradeHistory + SQLite), so trade alerts show the SL price even when the SL is placed by the protection sync rather than the execute path
 - **HL TP tier residual eliminated (#629)** — non-final tiers pre-floored to lot precision; final tier absorbs the remainder via integer-lot subtraction (`floor_size(size) - sum(non-final floors)`) so per-tier truncation can't strand an uncovered residual. Virtual qty normalized via `adapter.round_size` first to absorb Go float drift; sub-lot result skips the tier block with `[INFO]` log
+- **Manual-open SL+TP placed inline (#633)** — was: SL armed immediately, TP[n] reduce-only orders deferred to the next scheduler cycle (and both skipped entirely if `--atr` omitted). Now: `placeManualProtectionInline` runs `--sync-protection` immediately after the fill, returning TP OIDs that round-trip via `pending_manual_actions.tp_oids_json`. `--atr` is optional — fallback `0.1*fillPrice/leverage` arms SL@1×ATR + TPs when omitted; operator notified via owner DM if fallback can't be computed (no leverage / no fill price)
+- **Manual-open queue-failure cleanup (#635)** — when `InsertPendingManualAction` fails after a successful on-chain fill (disk full, DB locked), `attemptManualOpenCleanup` flattens the position via reduce-only market close sized to `fillQty` and cancels SL + TP OIDs in the same call; sized so peer manual/perps positions on the same coin are preserved; skipped under `--record-only`. Cleanup failures notify loudly — operator must flatten manually if both queue insert and cleanup fail
 
 **Opt-in field**
 - `trailing_stop_pct` (#502); `trailing_stop_atr_mult` (#507 — initial trigger deferred one cycle)
 - Open/close composition (#483); `stop_loss_margin_pct` (#490); `margin_per_trade_usd` (#520)
 - `tiered_tp_atr_live` (#527 — `atr_source` param, falls back to entry ATR on warm-up)
 - Regime detection `regime.enabled` + `allowed_regimes` (#541/#546/#558 — `Trade.Regime` column added on first start)
-- **`type: "manual"` strategy + `manual-open` / `manual-close` CLI (#569)** — operator-driven HL perps with auto-defaults SL@1×ATR + `tiered_tp_atr_live` (TP1@2× / TP2@3×); can now share a coin with HL perps or another `type=manual` (#619/#620 — blanket ban lifted; owner guards + `shouldCloseFullPosition` + `extraCancelOIDs` prevent cross-strategy mutation; peers must agree on `leverage` and `margin_mode`)
+- **`type: "manual"` strategy + `manual-open` / `manual-close` CLI (#569)** — operator-driven HL perps with auto-defaults SL@1×ATR + `tiered_tp_atr_live` (TP1@2× / TP2@3×); can now share a coin with HL perps or another `type=manual` (#619/#620 — blanket ban lifted; owner guards + `shouldCloseFullPosition` + `extraCancelOIDs` prevent cross-strategy mutation; peers must agree on `leverage` and `margin_mode`). SL + TP[n] orders now placed inline on `manual-open` (#633) so the position is never naked between fill and the next scheduler cycle; `--atr` is optional — fallback `0.1*fillPrice/leverage` is used when omitted (risks ~10% margin at 1× ATR)
 - **`discord.trade_alert_channels` / `telegram.trade_alert_channels` (#572/#573)** — optional map to route trade-fill alerts to a separate channel; omit to keep current behavior (summaries + alerts on same `channels` entry)
 - **N-tier HL TP via `params.tiers` (#615/issue #612)** — list of `{atr_multiple, close_fraction}` (cumulative); default `[{1×,0.5},{2×,1.0}]`; final tier coerced to 1.0 so on-chain TPs sum to full position; non-numeric values rejected per tier. `Position.TPOIDs` / `positions.tp_oids_json` SQLite column (legacy `tp1_oid` / `tp2_oid` retained for rollback to pre-#615 — only first two tiers survive a downgrade)
 
@@ -404,6 +406,9 @@ CLI:
 ./go-trader manual-open hl-manual-btc --side long --notional 500
 ./go-trader manual-open hl-manual-btc --side short --margin 100   # margin × leverage = notional
 
+# Optional: pass live ATR for accurate SL/TP distances; omit to use fallback
+./go-trader manual-open hl-manual-btc --side long --size 0.01 --atr 850
+
 # Close — full or partial
 ./go-trader manual-close hl-manual-btc            # full close
 ./go-trader manual-close hl-manual-btc --qty 0.005
@@ -416,8 +421,9 @@ CLI:
 Notes:
 
 - `--record-only` skips the live HL order; pair with `--fill-price`. SL is **not** auto-armed in record-only mode — place the trigger on the UI manually.
+- SL and TP[n] reduce-only orders are placed **inline** on open (#633). `--atr` is optional: when omitted, `0.1*fillPrice/leverage` is used as a fallback ATR (≈10% margin risked at 1× ATR SL). Pass `--atr` for accuracy when you have the live indicator value.
 - Open blocked when portfolio kill switch active or strategy has pending CB close.
-- Fills queued in `pending_manual_actions`, applied at top of next scheduler cycle (need `--once` if daemon idle).
+- Fills queued in `pending_manual_actions`, applied at top of next scheduler cycle (need `--once` if daemon idle). If the queue insert fails after a successful on-chain fill, the position is auto-flattened and SL/TP cancelled (#635); cleanup failures notify loudly — flatten manually.
 - A 99% partial close is **not** silently collapsed into a full close — the queue carries explicit `is_full_close` intent from `--qty`.
 - External closes (UI, SL, TP) detected by reconciler and cleared automatically (#576) — no ghosts.
 - `type=manual` exempt from CB drawdown checks (#574).
