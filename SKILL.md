@@ -240,6 +240,7 @@ When in doubt, treat as runtime default and prompt. Regenerate from `git log --o
 - **Discord SL line shows ATR multiplier (#638) + ATR before SL ordering (#639)** — open trade DMs and per-position summary extras now read `ATR | SL [×Nmult] | TP[i] | leverage`; sole-owner fixed-ATR stops display the multiplier next to the SL price so operators can confirm the configured `stop_loss_atr_mult` from the alert without checking config
 - **Portfolio peak rebaselined after strategy prune (#650/#653)** — when strategies are removed from config and the service restarts, `rebaselinePortfolioPeakAfterPrune` resets `PortfolioRisk.PeakValue` to the sum of surviving strategies' `RiskState.PeakValue` (falling back to configured `Capital` for cold starts), floored at `computeInitialPortfolioPeak`. Was: stale pre-prune peak survived restart and the first risk-check cycle latched the kill switch immediately on a shrunken book. No action needed — fires automatically on any prune
 - **Update.sh hardening (#647/#648)** — `scripts/update.sh` is now the single source of truth for `git pull --ff-only` + `uv sync` + `go build` (under `set -euo pipefail`); both the operator-DM snippet and `applyUpgrade` (auto-update DM path) call it. Fails fast with a friendly error if `uv` is missing on PATH; `applyUpgrade` timeout bumped 180s→300s for cold dep bumps; output tail-trimmed to 1500 chars for DM. External deploy automation (Ansible, image bake) should call this script too
+- **Owner DM on HL TP/SL fill (#661/#663)** — was: reconciler-detected TP/SL fills only surfaced via the next summary post (up to 5 min later). Now: all three reconciler detectors emit an owner DM the same cycle. Default on; disable with top-level `notify_tp_sl_fills: false`. Filled TP tiers also marked `✓` in Discord/Telegram position summaries (#662/#664) — no toggle
 
 **Opt-in field**
 - `trailing_stop_pct` (#502); `trailing_stop_atr_mult` (#507 — initial trigger deferred one cycle)
@@ -539,6 +540,7 @@ Global config:
 | Correlation tracking | `correlation.*` | disabled |
 | Summary cadence | `summary_frequency` | legacy defaults |
 | Regime detection | `regime.enabled`, `regime.period`, `regime.adx_threshold` | disabled; period=14, threshold=20 |
+| Notify on HL TP/SL fill | `notify_tp_sl_fills` | enabled (nil/missing); set `false` to disable owner DMs from reconciler-detected fills |
 
 Per-strategy:
 
