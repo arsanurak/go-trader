@@ -346,7 +346,7 @@ Then open `https://<node>.tailnet.ts.net:8443/dashboard` (and `:8444/dashboard`,
 
 Discord strategy summaries show columns `Init | Value | PnL | PnL% | DD | Wallet% | Tf | Int | #T | W/L` plus a `Book Sharpe (realized, annualized)` footer and the go-trader version + PID in the title. `okx-options` and `robinhood-options` channel keys route options summaries separately from spot/perps. `#T`/`W/L` come from the SQLite trades table; partial closes collapse into one round trip per position.
 
-Open-position lines append `SL: $<trigger_px> (<signed_pct>%)` when a Hyperliquid stop-loss trigger is set (percent sign-flipped for shorts so it always reads as the loss if hit), `<N>x ($<margin> margin)` for leveraged perps, and tier marks (`✓`) for filled TP rungs. Spot and 1× perps stay clean.
+Open-position lines append `SL: $<trigger_px> (<signed_pct>%)` when a Hyperliquid stop-loss trigger is set (percent sign-flipped for shorts so it always reads as the loss if hit), `<N>x ($<margin> margin)` for leveraged perps, and tier marks (`✓`) for filled TP rungs. Each TP price includes the configured ATR multiple in parentheses (for example `12345.6 (2x)`), matching trade-alert formatting. Spot and 1× perps stay clean.
 
 ---
 
