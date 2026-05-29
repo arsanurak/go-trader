@@ -5,11 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -20,7 +19,6 @@ sys.path.insert(0, os.path.join(ROOT, "backtest"))
 
 from atr import ensure_atr_indicator  # noqa: E402
 from backtester import Backtester  # noqa: E402
-from htf_filter import apply_htf_filter, get_default_htf  # noqa: E402
 from registry_loader import load_registry  # noqa: E402
 from run_backtest import _apply_htf_filter_to_df  # noqa: E402
 

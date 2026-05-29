@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,6 +35,28 @@ func TestMergeStrategyTunerOverrides(t *testing.T) {
 	}
 }
 
+func TestMergeStrategyTunerOverridesClearsSiblingStop(t *testing.T) {
+	stop := 1.5
+	base := StrategyConfig{
+		ID:              "hl-btc",
+		Type:            "perps",
+		StopLossATRMult: &stop,
+	}
+	overrides := map[string]json.RawMessage{
+		"stop_loss_pct": json.RawMessage(`2`),
+	}
+	merged, err := mergeStrategyTunerOverrides(base, overrides)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	if merged.StopLossPct == nil || *merged.StopLossPct != 2 {
+		t.Fatalf("stop_loss_pct = %v, want 2", merged.StopLossPct)
+	}
+	if merged.StopLossATRMult != nil {
+		t.Fatalf("stop_loss_atr_mult = %v, want nil", merged.StopLossATRMult)
+	}
+}
+
 func TestBuildUIStrategyConfigFields(t *testing.T) {
 	stop := 2.5
 	sc := StrategyConfig{
@@ -51,6 +75,9 @@ func TestBuildUIStrategyConfigFields(t *testing.T) {
 	if resp.OpenStrategy.Params["fast_period"] != 8 {
 		t.Fatalf("merged fast_period = %v, want 8", resp.OpenStrategy.Params["fast_period"])
 	}
+	if resp.ApplyRequiresRestart {
+		t.Fatal("expected apply_requires_restart=false with no overrides")
+	}
 	foundRuntime := false
 	foundParam := false
 	for _, field := range resp.EditableFields {
@@ -66,17 +93,33 @@ func TestBuildUIStrategyConfigFields(t *testing.T) {
 	}
 }
 
+func TestTunerApplyRequiresRestart(t *testing.T) {
+	if !tunerApplyRequiresRestart(map[string]json.RawMessage{"htf_filter": json.RawMessage(`true`)}, false) {
+		t.Fatal("htf_filter override should require restart")
+	}
+	if tunerApplyRequiresRestart(map[string]json.RawMessage{"interval_seconds": json.RawMessage(`60`)}, false) {
+		t.Fatal("interval_seconds alone should not require restart")
+	}
+	if !tunerApplyRequiresRestart(map[string]json.RawMessage{"leverage": json.RawMessage(`5`)}, true) {
+		t.Fatal("leverage override with open position should require restart")
+	}
+}
+
 func TestApplyStrategyConfigPatch(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
 	body := `{
+  "config_version": 14,
+  "interval_seconds": 60,
   "strategies": [
     {
       "id": "spot-btc",
       "type": "spot",
       "platform": "binanceus",
+      "script": "shared_scripts/check_strategy.py",
       "args": ["sma", "BTC/USDT", "1h"],
-      "open_strategy": {"name": "sma", "params": {"period": 20}}
+      "capital": 1000,
+      "open_strategy": {"name": "sma_crossover", "params": {"fast_period": 20, "slow_period": 50}}
     }
   ]
 }`
@@ -88,16 +131,20 @@ func TestApplyStrategyConfigPatch(t *testing.T) {
 		Type:            "spot",
 		IntervalSeconds: 7200,
 		OpenStrategy: StrategyRef{
-			Name:   "sma",
-			Params: map[string]interface{}{"period": 10},
+			Name:   "sma_crossover",
+			Params: map[string]interface{}{"fast_period": 10, "slow_period": 50},
 		},
 	}
-	restartRequired, err := applyStrategyConfigPatch(path, "spot-btc", merged)
+	overrides := map[string]json.RawMessage{
+		"interval_seconds":                 json.RawMessage(`7200`),
+		"open_strategy.params.fast_period": json.RawMessage(`10`),
+	}
+	restartRequired, err := applyStrategyConfigPatch(path, "spot-btc", merged, overrides, false)
 	if err != nil {
 		t.Fatalf("applyStrategyConfigPatch: %v", err)
 	}
-	if !restartRequired {
-		t.Fatal("expected restartRequired=true")
+	if restartRequired {
+		t.Fatal("expected restartRequired=false for interval/param overrides")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -115,10 +162,99 @@ func TestApplyStrategyConfigPatch(t *testing.T) {
 	if root.Strategies[0]["interval_seconds"] != float64(7200) {
 		t.Fatalf("interval_seconds = %v, want 7200", root.Strategies[0]["interval_seconds"])
 	}
-	openRef := root.Strategies[0]["open_strategy"].(map[string]interface{})
-	params := openRef["params"].(map[string]interface{})
-	if params["period"] != float64(10) {
-		t.Fatalf("period = %v, want 10", params["period"])
+	rawOpen, ok := root.Strategies[0]["open_strategy"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("open_strategy = %v, want object", root.Strategies[0]["open_strategy"])
+	}
+	params, ok := rawOpen["params"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("open_strategy.params = %v, want object", rawOpen["params"])
+	}
+	if params["fast_period"] != float64(10) {
+		t.Fatalf("fast_period = %v, want 10", params["fast_period"])
+	}
+}
+
+func TestPatchStrategyJSONParamsPreserved(t *testing.T) {
+	item := map[string]json.RawMessage{
+		"open_strategy": mustRawJSON(t, map[string]interface{}{
+			"name":   "sma_crossover",
+			"params": map[string]interface{}{"fast_period": 20.0, "slow_period": 50.0},
+		}),
+	}
+	merged := StrategyConfig{
+		Type: "spot",
+		OpenStrategy: StrategyRef{
+			Name:   "sma_crossover",
+			Params: map[string]interface{}{"fast_period": 10, "slow_period": 50},
+		},
+	}
+	overrides := map[string]json.RawMessage{
+		"open_strategy.params.fast_period": json.RawMessage(`10`),
+	}
+	patched, err := patchStrategyJSON(item, merged, overrides)
+	if err != nil {
+		t.Fatalf("patchStrategyJSON: %v", err)
+	}
+	var ref StrategyRef
+	if err := json.Unmarshal(patched["open_strategy"], &ref); err != nil {
+		t.Fatalf("unmarshal open_strategy: %v", err)
+	}
+	if ref.Params["fast_period"] != float64(10) {
+		t.Fatalf("fast_period = %v, want 10", ref.Params["fast_period"])
+	}
+	if ref.Params["slow_period"] != float64(50) {
+		t.Fatalf("slow_period = %v, want 50 preserved", ref.Params["slow_period"])
+	}
+}
+
+func TestPatchStrategyJSONSkipsUntouched(t *testing.T) {
+	item := map[string]json.RawMessage{
+		"invert_signal": mustRawJSON(t, true),
+		"htf_filter":    mustRawJSON(t, false),
+	}
+	merged := StrategyConfig{
+		Type:         "perps",
+		InvertSignal: false,
+		HTFFilter:    true,
+		Leverage:     3,
+	}
+	overrides := map[string]json.RawMessage{
+		"leverage": json.RawMessage(`3`),
+	}
+	patched, err := patchStrategyJSON(item, merged, overrides)
+	if err != nil {
+		t.Fatalf("patchStrategyJSON: %v", err)
+	}
+	var invert bool
+	if err := json.Unmarshal(patched["invert_signal"], &invert); err != nil || !invert {
+		t.Fatalf("invert_signal = %v, want true preserved", invert)
+	}
+	if _, ok := patched["htf_filter"]; !ok {
+		t.Fatal("htf_filter should remain untouched")
+	}
+	var lev float64
+	if err := json.Unmarshal(patched["leverage"], &lev); err != nil || lev != 3 {
+		t.Fatalf("leverage = %v, want 3", lev)
+	}
+}
+
+func TestRequireMutatingAPIAuth(t *testing.T) {
+	ss := NewStatusServer(NewAppState(), nil, "", nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/strategies/x/config", nil)
+	w := httptest.NewRecorder()
+	if ss.requireMutatingAPIAuth(w, req) {
+		t.Fatal("expected auth failure when status_token unset")
+	}
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+
+	ss = NewStatusServer(NewAppState(), nil, "secret", nil, nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	w = httptest.NewRecorder()
+	if !ss.requireMutatingAPIAuth(w, req) {
+		t.Fatal("expected auth success with matching token")
 	}
 }
 
@@ -136,4 +272,13 @@ func TestSimulateConfigPayloadOpenFallback(t *testing.T) {
 	if openRef.Name != "sma" {
 		t.Fatalf("open_strategy.name = %q, want sma", openRef.Name)
 	}
+}
+
+func mustRawJSON(t *testing.T, v interface{}) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return raw
 }

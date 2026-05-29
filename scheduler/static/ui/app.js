@@ -609,6 +609,16 @@
     refreshChart().catch(handleRefreshError);
   }
 
+  function tunerApplyRequiresRestartClient() {
+    const keys = Object.keys(state.tuner.overrides);
+    if (state.tuner.config && state.tuner.config.has_open_position) {
+      if (keys.indexOf("direction") >= 0 || keys.indexOf("invert_signal") >= 0 || keys.indexOf("leverage") >= 0) {
+        return true;
+      }
+    }
+    return keys.indexOf("htf_filter") >= 0;
+  }
+
   async function applyTunerConfig() {
     if (!state.activeID || !tunerHasOverrides()) return;
     const resp = await postJSON(
@@ -999,7 +1009,7 @@
   if (els.tunerApply) {
     els.tunerApply.addEventListener("click", function () {
       if (!state.tuner.config) return;
-      const restart = state.tuner.config.apply_requires_restart;
+      const restart = tunerApplyRequiresRestartClient();
       if (els.tunerConfirmText) {
         els.tunerConfirmText.textContent = restart
           ? "This writes tuned parameters to the live config file. Restart go-trader afterward — hot reload cannot apply most tuner fields."
