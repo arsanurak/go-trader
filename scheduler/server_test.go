@@ -359,6 +359,73 @@ func TestHandleAPIStrategies(t *testing.T) {
 	}
 }
 
+func TestHandleAPIStrategiesOverview(t *testing.T) {
+	state := NewAppState()
+	state.Strategies["spot-btc"] = &StrategyState{
+		ID:              "spot-btc",
+		Type:            "spot",
+		Cash:            1100,
+		InitialCapital:  1000,
+		Regime:          "trending",
+		Positions:       make(map[string]*Position),
+		OptionPositions: make(map[string]*OptionPosition),
+	}
+	state.Strategies["okx-eth"] = &StrategyState{
+		ID:              "okx-eth",
+		Type:            "perps",
+		Cash:            800,
+		InitialCapital:  1000,
+		Positions:       make(map[string]*Position),
+		OptionPositions: make(map[string]*OptionPosition),
+	}
+	var mu sync.RWMutex
+	strategies := []StrategyConfig{
+		{ID: "okx-eth", Platform: "okx", Type: "perps", Args: []string{"ema", "ETH", "4h"}, Direction: DirectionBoth},
+		{ID: "spot-btc", Platform: "binanceus", Type: "spot", Args: []string{"sma", "BTC/USDT", "1h"}},
+	}
+	ss := NewStatusServer(state, &mu, "", strategies, nil)
+
+	req := httptest.NewRequest("GET", "/api/strategies/overview", nil)
+	w := httptest.NewRecorder()
+	ss.handleAPIStrategiesOverview(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	var resp struct {
+		Strategies []UIStrategyOverview `json:"strategies"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Strategies) != 2 {
+		t.Fatalf("strategies len = %d, want 2", len(resp.Strategies))
+	}
+	byID := make(map[string]UIStrategyOverview, len(resp.Strategies))
+	for _, row := range resp.Strategies {
+		byID[row.ID] = row
+	}
+	spot := byID["spot-btc"]
+	if spot.Platform != "binanceus" || spot.Symbol != "BTC/USDT" {
+		t.Errorf("spot-btc row = %+v, want binanceus BTC/USDT", spot)
+	}
+	if spot.PnL != 100 || spot.PnLPct != 10 {
+		t.Errorf("spot-btc pnl = %v/%v, want 100/10", spot.PnL, spot.PnLPct)
+	}
+	if spot.Regime != "trending" {
+		t.Errorf("spot-btc regime = %q, want trending", spot.Regime)
+	}
+	if spot.Direction != "" {
+		t.Errorf("spot-btc direction = %q, want empty", spot.Direction)
+	}
+	okx := byID["okx-eth"]
+	if okx.Direction != DirectionBoth {
+		t.Errorf("okx-eth direction = %q, want %q", okx.Direction, DirectionBoth)
+	}
+	if okx.PnL != -200 || okx.PnLPct != -20 {
+		t.Errorf("okx-eth pnl = %v/%v, want -200/-20", okx.PnL, okx.PnLPct)
+	}
+}
+
 func TestHandleAPIStrategyCandles_UsesFetcherAndCache(t *testing.T) {
 	state := NewAppState()
 	var mu sync.RWMutex
@@ -443,6 +510,103 @@ func TestHandleAPIStrategyTradesMarkers(t *testing.T) {
 	}
 	if resp.Trades[0].Regime != "trending" || resp.Trades[1].Regime != "ranging" {
 		t.Errorf("trade regimes = %q/%q, want trending/ranging", resp.Trades[0].Regime, resp.Trades[1].Regime)
+	}
+}
+
+func TestBuildEquityCurvePoints(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(24 * time.Hour)
+	t2 := t0.Add(48 * time.Hour)
+	closed := []ClosedPosition{
+		{OpenedAt: t0, ClosedAt: t1, RealizedPnL: 50},
+		{OpenedAt: t1, ClosedAt: t2, RealizedPnL: -20},
+	}
+	points := buildEquityCurvePoints(1000, closed, 1030, 10)
+	if len(points) != 4 {
+		t.Fatalf("len = %d, want 4 (start + 2 closes + current)", len(points))
+	}
+	if points[0].T != t0.Unix() || points[0].V != 1000 {
+		t.Errorf("start = %+v, want t=%d v=1000", points[0], t0.Unix())
+	}
+	if points[1].T != t1.Unix() || points[1].V != 1050 {
+		t.Errorf("after first close = %+v, want v=1050", points[1])
+	}
+	if points[2].T != t2.Unix() || points[2].V != 1030 {
+		t.Errorf("after second close = %+v, want v=1030", points[2])
+	}
+	if points[3].V != 1030 {
+		t.Errorf("final value = %v, want 1030", points[3].V)
+	}
+
+	trimmed := buildEquityCurvePoints(1000, closed, 1030, 2)
+	if len(trimmed) != 2 {
+		t.Fatalf("trimmed len = %d, want 2", len(trimmed))
+	}
+	if trimmed[0].V != 1030 || trimmed[1].V != 1030 {
+		t.Errorf("trimmed keeps most recent points, got %+v", trimmed)
+	}
+}
+
+func TestHandleAPIStrategyEquity(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
+	state := &AppState{
+		Strategies: map[string]*StrategyState{
+			"spot-btc": {
+				ID:             "spot-btc",
+				Type:           "spot",
+				Cash:           1010,
+				InitialCapital: 1000,
+				Positions:      map[string]*Position{},
+				ClosedPositions: []ClosedPosition{
+					{
+						StrategyID: "spot-btc", Symbol: "BTC/USDT", Quantity: 1, AvgCost: 100,
+						Side: "long", OpenedAt: now.Add(-2 * time.Hour), ClosedAt: now.Add(-time.Hour),
+						ClosePrice: 110, RealizedPnL: 10, CloseReason: "signal",
+					},
+				},
+			},
+		},
+	}
+	if err := db.SaveState(state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	var mu sync.RWMutex
+	ss := NewStatusServer(state, &mu, "", []StrategyConfig{
+		{ID: "spot-btc", Platform: "binanceus", Type: "spot", Capital: 1000, Args: []string{"sma", "BTC/USDT", "1h"}},
+	}, db)
+
+	req := httptest.NewRequest("GET", "/api/strategies/spot-btc/equity?limit=40", nil)
+	w := httptest.NewRecorder()
+	ss.handleAPIStrategy(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	var resp struct {
+		StrategyID string          `json:"strategy_id"`
+		Points     []UIEquityPoint `json:"points"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.StrategyID != "spot-btc" {
+		t.Errorf("strategy_id = %q, want spot-btc", resp.StrategyID)
+	}
+	if len(resp.Points) < 2 {
+		t.Fatalf("points len = %d, want at least 2", len(resp.Points))
+	}
+	if resp.Points[0].V != 1000 {
+		t.Errorf("first point value = %v, want 1000", resp.Points[0].V)
+	}
+	foundClose := false
+	for _, p := range resp.Points {
+		if p.T == now.Add(-time.Hour).Unix() && p.V == 1010 {
+			foundClose = true
+		}
+	}
+	if !foundClose {
+		t.Errorf("missing close point at %+v", resp.Points)
 	}
 }
 

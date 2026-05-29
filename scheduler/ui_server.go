@@ -27,6 +27,20 @@ type UIStrategy struct {
 	Direction string `json:"direction,omitempty"`
 }
 
+type UIStrategyOverview struct {
+	ID             string  `json:"id"`
+	Platform       string  `json:"platform"`
+	Symbol         string  `json:"symbol"`
+	PnLPct         float64 `json:"pnl_pct"`
+	WinRate        float64 `json:"win_rate,omitempty"`
+	Sharpe         float64 `json:"sharpe,omitempty"`
+	Regime         string  `json:"regime,omitempty"`
+	Direction      string  `json:"direction,omitempty"`
+	PnL            float64 `json:"pnl"`
+	PortfolioValue float64 `json:"portfolio_value"`
+	InitialCapital float64 `json:"initial_capital"`
+}
+
 type UIStrategyStatus struct {
 	ID              string                     `json:"id"`
 	Type            string                     `json:"type"`
@@ -51,6 +65,15 @@ type UIStrategyStatus struct {
 	SizingLeverage  float64                    `json:"sizing_leverage,omitempty"`
 	MarginMode      string                     `json:"margin_mode,omitempty"`
 }
+
+type UIEquityPoint struct {
+	T int64   `json:"t"`
+	V float64 `json:"v"`
+}
+
+// uiEquityLookbackLimit caps closed-position rows for dashboard equity curves (#805).
+// Independent of sharpeLookbackLimit so Sharpe tuning does not shrink sparklines.
+const uiEquityLookbackLimit = 500
 
 type UITradeMarker struct {
 	Time        int64   `json:"time"`
@@ -130,6 +153,34 @@ func (ss *StatusServer) handleAPIStrategies(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string][]UIStrategy{"strategies": strategies})
 }
 
+func (ss *StatusServer) handleAPIStrategiesOverview(w http.ResponseWriter, r *http.Request) {
+	if ss.rejectIfDraining(w) {
+		return
+	}
+	if !ss.requireAPIAuth(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if r.URL.Path != "/api/strategies/overview" && r.URL.Path != "/api/strategies/overview/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	configs := ss.uiStrategies()
+	out := make([]UIStrategyOverview, 0, len(configs))
+	for _, item := range configs {
+		overview, _, ok := ss.uiStrategyOverview(item.ID)
+		if !ok {
+			continue
+		}
+		out = append(out, overview)
+	}
+	writeJSON(w, map[string][]UIStrategyOverview{"strategies": out})
+}
+
 func (ss *StatusServer) handleAPIStrategy(w http.ResponseWriter, r *http.Request) {
 	if ss.rejectIfDraining(w) {
 		return
@@ -153,6 +204,8 @@ func (ss *StatusServer) handleAPIStrategy(w http.ResponseWriter, r *http.Request
 		ss.handleAPIStrategyTrades(w, r, id)
 	case "status":
 		ss.handleAPIStrategyStatus(w, r, id)
+	case "equity":
+		ss.handleAPIStrategyEquity(w, r, id)
 	default:
 		http.NotFound(w, r)
 	}
@@ -329,11 +382,10 @@ func (ss *StatusServer) handleAPIStrategyTrades(w http.ResponseWriter, r *http.R
 	})
 }
 
-func (ss *StatusServer) handleAPIStrategyStatus(w http.ResponseWriter, r *http.Request, id string) {
+func (ss *StatusServer) uiStrategyOverview(id string) (UIStrategyOverview, LifetimeTradeStats, bool) {
 	sc, ok := ss.strategyConfig(id)
 	if !ok {
-		writeJSONError(w, http.StatusNotFound, "strategy not found")
-		return
+		return UIStrategyOverview{}, LifetimeTradeStats{}, false
 	}
 
 	ss.mu.RLock()
@@ -341,18 +393,13 @@ func (ss *StatusServer) handleAPIStrategyStatus(w http.ResponseWriter, r *http.R
 	var snapshot StrategyState
 	if strat != nil {
 		snapshot = *strat
-		snapshot.Positions = cloneUIPositions(strat.Positions)
-		snapshot.OptionPositions = cloneUIOptionPositions(strat.OptionPositions)
-		snapshot.TradeHistory = append([]Trade(nil), strat.TradeHistory...)
-		snapshot.RiskState = cloneUIRiskState(strat.RiskState)
 	}
 	ss.mu.RUnlock()
 	if strat == nil {
-		writeJSONError(w, http.StatusNotFound, "strategy state not found")
-		return
+		return UIStrategyOverview{}, LifetimeTradeStats{}, false
 	}
 
-	prices := make(map[string]float64)
+	prices := ss.fetchLiveMarkPrices()
 	pv := PortfolioValue(&snapshot, prices)
 	initCap := EffectiveInitialCapital(sc, &snapshot)
 	pnl := pv - initCap
@@ -376,23 +423,66 @@ func (ss *StatusServer) handleAPIStrategyStatus(w http.ResponseWriter, r *http.R
 		winRate = float64(lifetime.Wins) / float64(lifetime.Wins+lifetime.Losses) * 100
 	}
 
+	return UIStrategyOverview{
+		ID:             id,
+		Platform:       sc.Platform,
+		Symbol:         strategyDisplaySymbol(sc),
+		PnLPct:         pnlPct,
+		WinRate:        winRate,
+		Sharpe:         sharpe,
+		Regime:         snapshot.Regime,
+		Direction:      strategyDisplayDirection(sc),
+		PnL:            pnl,
+		PortfolioValue: pv,
+		InitialCapital: initCap,
+	}, lifetime, true
+}
+
+func (ss *StatusServer) handleAPIStrategyStatus(w http.ResponseWriter, r *http.Request, id string) {
+	sc, ok := ss.strategyConfig(id)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "strategy not found")
+		return
+	}
+	overview, lifetime, ok := ss.uiStrategyOverview(id)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "strategy state not found")
+		return
+	}
+
+	ss.mu.RLock()
+	strat := ss.state.Strategies[id]
+	var snapshot StrategyState
+	if strat != nil {
+		snapshot = *strat
+		snapshot.Positions = cloneUIPositions(strat.Positions)
+		snapshot.OptionPositions = cloneUIOptionPositions(strat.OptionPositions)
+		snapshot.TradeHistory = append([]Trade(nil), strat.TradeHistory...)
+		snapshot.RiskState = cloneUIRiskState(strat.RiskState)
+	}
+	ss.mu.RUnlock()
+	if strat == nil {
+		writeJSONError(w, http.StatusNotFound, "strategy state not found")
+		return
+	}
+
 	resp := UIStrategyStatus{
-		ID:              id,
+		ID:              overview.ID,
 		Type:            sc.Type,
-		Platform:        sc.Platform,
-		Symbol:          strategyDisplaySymbol(sc),
+		Platform:        overview.Platform,
+		Symbol:          overview.Symbol,
 		Timeframe:       strategyDisplayTimeframe(sc),
-		Direction:       strategyDisplayDirection(sc),
+		Direction:       overview.Direction,
 		Cash:            snapshot.Cash,
-		InitialCapital:  initCap,
-		PortfolioValue:  pv,
-		PnL:             pnl,
-		PnLPct:          pnlPct,
+		InitialCapital:  overview.InitialCapital,
+		PortfolioValue:  overview.PortfolioValue,
+		PnL:             overview.PnL,
+		PnLPct:          overview.PnLPct,
 		TradeCount:      len(snapshot.TradeHistory),
-		WinRate:         winRate,
+		WinRate:         overview.WinRate,
 		LifetimeStats:   lifetime,
-		Sharpe:          sharpe,
-		Regime:          snapshot.Regime,
+		Sharpe:          overview.Sharpe,
+		Regime:          overview.Regime,
 		RiskState:       snapshot.RiskState,
 		Positions:       snapshot.Positions,
 		OptionPositions: snapshot.OptionPositions,
@@ -401,6 +491,121 @@ func (ss *StatusServer) handleAPIStrategyStatus(w http.ResponseWriter, r *http.R
 		MarginMode:      sc.MarginMode,
 	}
 	writeJSON(w, resp)
+}
+
+func (ss *StatusServer) handleAPIStrategyEquity(w http.ResponseWriter, r *http.Request, id string) {
+	sc, ok := ss.strategyConfig(id)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "strategy not found")
+		return
+	}
+
+	ss.mu.RLock()
+	strat := ss.state.Strategies[id]
+	var snapshot StrategyState
+	if strat != nil {
+		snapshot = *strat
+		snapshot.Positions = cloneUIPositions(strat.Positions)
+		snapshot.OptionPositions = cloneUIOptionPositions(strat.OptionPositions)
+	}
+	ss.mu.RUnlock()
+	if strat == nil {
+		writeJSONError(w, http.StatusNotFound, "strategy state not found")
+		return
+	}
+
+	initCap := EffectiveInitialCapital(sc, &snapshot)
+	// Cost-basis terminal point only — avoids N× external mark fetches when
+	// loadSparklines polls one equity URL per visible strategy (#813).
+	pv := PortfolioValue(&snapshot, map[string]float64{})
+
+	var closed []ClosedPosition
+	if ss.stateDB != nil {
+		rows, _, err := ss.stateDB.QueryClosedPositions(id, "", time.Time{}, time.Time{}, uiEquityLookbackLimit, 0)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		closed = rows
+	}
+
+	limit := parseUIEquityLimit(r)
+	points := buildEquityCurvePoints(initCap, closed, pv, limit)
+	writeJSON(w, map[string]interface{}{
+		"strategy_id": id,
+		"points":      points,
+	})
+}
+
+// buildEquityCurvePoints builds a mini equity curve from initial capital, realized
+// PnL at each closed position (ASC), and the current portfolio value.
+func buildEquityCurvePoints(initCap float64, closed []ClosedPosition, currentPV float64, limit int) []UIEquityPoint {
+	if limit <= 0 {
+		limit = 40
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	sorted := append([]ClosedPosition(nil), closed...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].ClosedAt.Equal(sorted[j].ClosedAt) {
+			return sorted[i].OpenedAt.Before(sorted[j].OpenedAt)
+		}
+		return sorted[i].ClosedAt.Before(sorted[j].ClosedAt)
+	})
+
+	points := make([]UIEquityPoint, 0, len(sorted)+2)
+	equity := initCap
+
+	var startT int64
+	if len(sorted) > 0 {
+		cp := sorted[0]
+		if !cp.OpenedAt.IsZero() {
+			startT = cp.OpenedAt.UTC().Unix()
+		} else if !cp.ClosedAt.IsZero() {
+			startT = cp.ClosedAt.UTC().Unix()
+		}
+	}
+	if startT == 0 {
+		startT = time.Now().UTC().Unix()
+	}
+	points = append(points, UIEquityPoint{T: startT, V: initCap})
+
+	for _, cp := range sorted {
+		if cp.ClosedAt.IsZero() {
+			continue
+		}
+		equity += cp.RealizedPnL
+		points = append(points, UIEquityPoint{
+			T: cp.ClosedAt.UTC().Unix(),
+			V: equity,
+		})
+	}
+
+	now := time.Now().UTC().Unix()
+	last := points[len(points)-1]
+	if last.V != currentPV || last.T != now {
+		points = append(points, UIEquityPoint{T: now, V: currentPV})
+	}
+
+	if len(points) > limit {
+		points = points[len(points)-limit:]
+	}
+	return points
+}
+
+func parseUIEquityLimit(r *http.Request) int {
+	limit := 40
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	return limit
 }
 
 func parseUITimeQuery(r *http.Request) (from, to time.Time, limit int) {
