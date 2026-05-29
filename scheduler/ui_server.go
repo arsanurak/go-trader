@@ -424,6 +424,8 @@ func (ss *StatusServer) handleAPIStrategyEquity(w http.ResponseWriter, r *http.R
 	var snapshot StrategyState
 	if strat != nil {
 		snapshot = *strat
+		snapshot.Positions = cloneUIPositions(strat.Positions)
+		snapshot.OptionPositions = cloneUIOptionPositions(strat.OptionPositions)
 	}
 	ss.mu.RUnlock()
 	if strat == nil {
@@ -432,8 +434,9 @@ func (ss *StatusServer) handleAPIStrategyEquity(w http.ResponseWriter, r *http.R
 	}
 
 	initCap := EffectiveInitialCapital(sc, &snapshot)
-	prices := ss.fetchLiveMarkPrices()
-	pv := PortfolioValue(&snapshot, prices)
+	// Cost-basis terminal point only — avoids N× external mark fetches when
+	// loadSparklines polls one equity URL per visible strategy (#813).
+	pv := PortfolioValue(&snapshot, map[string]float64{})
 
 	var closed []ClosedPosition
 	if ss.stateDB != nil {
