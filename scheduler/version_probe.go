@@ -199,7 +199,8 @@ func formatProbeFailure(script string, runErr error, stderr, stdout string) erro
 }
 
 func probeFailureScriptMissing(detail string) bool {
-	return strings.Contains(detail, "can't open file") ||
-		strings.Contains(detail, "No such file or directory") ||
-		strings.Contains(detail, "No such file:")
+	// Python reports a missing probe script as "can't open file '…': [Errno 2] …".
+	// Avoid broader ENOENT substrings so internal FileNotFoundError from a real
+	// script is not mislabeled as a deploy-tree gap.
+	return strings.Contains(detail, "can't open file")
 }
