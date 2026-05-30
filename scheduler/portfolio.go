@@ -524,7 +524,6 @@ func exchangeOrderIDForTrade(fillOID string, useFillMetadata bool) string {
 	return ""
 }
 
-// PortfolioValue calculates total value of a strategy's portfolio.
 // formatStatusLine renders the per-strategy Phase 6 status log line. regime is
 // the strategy's most recent primary regime label; an empty label (spot/options
 // or strategies without regime detection) is shown as "-".
@@ -536,6 +535,7 @@ func formatStatusLine(cash float64, posCount int, value float64, trades int, reg
 		cash, posCount, value, trades, regime)
 }
 
+// PortfolioValue calculates total value of a strategy's portfolio.
 func PortfolioValue(s *StrategyState, prices map[string]float64) float64 {
 	total := s.Cash
 	for sym, pos := range s.Positions {
