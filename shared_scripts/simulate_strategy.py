@@ -167,7 +167,14 @@ def _simulate_one(cfg: dict, candles: List[dict]) -> List[dict]:
     merged_params = {**defaults, **params}
 
     df_signals = reg.apply_strategy(open_name, df, merged_params)
-    close_refs = [dict(r) for r in (cfg.get("close_strategies") or [])]
+    # #842: a strategy has a single close_strategy ref; still accept the legacy
+    # close_strategies array (length <=1 after the collapse). The Backtester's
+    # close_strategies= list interface is fed the 0-or-1 element list.
+    single_close = cfg.get("close_strategy")
+    if isinstance(single_close, dict) and single_close.get("name"):
+        close_refs = [dict(single_close)]
+    else:
+        close_refs = [dict(r) for r in (cfg.get("close_strategies") or [])]
     if close_refs:
         df_signals = ensure_atr_indicator(df_signals)
 

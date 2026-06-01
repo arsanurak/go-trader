@@ -122,10 +122,18 @@ def load_strategy_config(config_path: str, strategy_id: str) -> dict:
                 f"release (backtester parity deferred — see #779). Use the "
                 f"static `direction` / `invert_signal` fields for backtesting."
             )
+        # #842: a strategy has a single close_strategy ref. Still accept the
+        # legacy close_strategies array (length <=1 after the collapse) so old
+        # configs keep backtesting; the backtester's close_strategies= list
+        # interface is fed the 0-or-1 element list.
         close_refs = []
-        for ref in sc.get("close_strategies", []) or []:
-            if isinstance(ref, dict) and ref.get("name"):
-                close_refs.append({"name": ref["name"], "params": dict(ref.get("params") or {})})
+        single = sc.get("close_strategy")
+        if isinstance(single, dict) and single.get("name"):
+            close_refs.append({"name": single["name"], "params": dict(single.get("params") or {})})
+        else:
+            for ref in sc.get("close_strategies", []) or []:
+                if isinstance(ref, dict) and ref.get("name"):
+                    close_refs.append({"name": ref["name"], "params": dict(ref.get("params") or {})})
         return {
             "open_strategy": {
                 "name": open_ref["name"],

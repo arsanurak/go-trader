@@ -155,6 +155,41 @@ def test_load_strategy_config_extracts_refs(tmp_path):
     assert kwargs["close_strategies"][0]["params"]["tiers"][0]["atr_multiple"] == 2.0
 
 
+def test_load_strategy_config_reads_single_close_strategy(tmp_path):
+    # #842: configs use a single close_strategy ref; load_strategy_config must
+    # read it into the backtester's close_strategies= list (length 1).
+    path = _write_config(tmp_path, version=15, strategies=[
+        {
+            "id": "hl-temacb-btc",
+            "type": "perps",
+            "open_strategy": {"name": "tema_cross_bd"},
+            "close_strategy": {"name": "tiered_tp_atr", "params": {"tiers": [
+                {"atr_multiple": 2.0, "close_fraction": 0.5},
+                {"atr_multiple": 3.0, "close_fraction": 1.0},
+            ]}},
+        },
+    ])
+    kwargs = run_backtest.load_strategy_config(path, "hl-temacb-btc")
+    assert len(kwargs["close_strategies"]) == 1
+    assert kwargs["close_strategies"][0]["name"] == "tiered_tp_atr"
+    assert kwargs["close_strategies"][0]["params"]["tiers"][1]["atr_multiple"] == 3.0
+
+
+def test_load_strategy_config_single_close_wins_over_legacy_array(tmp_path):
+    # When both keys are present (defensive), the canonical close_strategy wins.
+    path = _write_config(tmp_path, version=15, strategies=[
+        {
+            "id": "hl-temacb-btc",
+            "type": "perps",
+            "open_strategy": {"name": "tema_cross_bd"},
+            "close_strategy": {"name": "tp_at_pct", "params": {"pct": 0.05}},
+            "close_strategies": [{"name": "tiered_tp_atr"}],
+        },
+    ])
+    kwargs = run_backtest.load_strategy_config(path, "hl-temacb-btc")
+    assert [r["name"] for r in kwargs["close_strategies"]] == ["tp_at_pct"]
+
+
 def test_load_strategy_config_rejects_pre_v13(tmp_path):
     path = _write_config(tmp_path, version=12, strategies=[
         # Pre-v13 flat shape: open_strategy is a string, params is flat.
