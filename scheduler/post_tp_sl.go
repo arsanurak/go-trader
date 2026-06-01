@@ -9,17 +9,17 @@ import (
 	"sync"
 )
 
-// deprecatedCloseKeyWarned dedupes one-shot deprecation warnings per legacy
-// close-config key so a busy scheduler doesn't spam the log every cycle (#841).
-var deprecatedCloseKeyWarned sync.Map
+// deprecatedConfigKeyWarned dedupes one-shot deprecation warnings per legacy
+// config key so a busy scheduler doesn't spam the log every cycle (#841).
+var deprecatedConfigKeyWarned sync.Map
 
-// warnDeprecatedCloseKey emits a single [DEPRECATED] notice the first time a
-// legacy close-config key is read, pointing operators at the canonical name.
-func warnDeprecatedCloseKey(old, canonical string) {
-	if _, loaded := deprecatedCloseKeyWarned.LoadOrStore(old+"->"+canonical, true); loaded {
+// warnDeprecatedConfigKey emits a single [DEPRECATED] notice the first time a
+// legacy config key is read, pointing operators at the canonical name.
+func warnDeprecatedConfigKey(old, canonical string) {
+	if _, loaded := deprecatedConfigKeyWarned.LoadOrStore(old+"->"+canonical, true); loaded {
 		return
 	}
-	fmt.Printf("[DEPRECATED] close config key %q is deprecated; use %q (#841)\n", old, canonical)
+	fmt.Printf("[DEPRECATED] config key %q is deprecated; use %q (#841)\n", old, canonical)
 }
 
 // closeTierListParam returns the take-profit tier list from a close ref's
@@ -35,7 +35,7 @@ func closeTierListParam(params map[string]interface{}) (interface{}, bool) {
 		return v, true
 	}
 	if v, ok := params["tiers"]; ok {
-		warnDeprecatedCloseKey("tiers", "tp_tiers")
+		warnDeprecatedConfigKey("tiers", "tp_tiers")
 		return v, true
 	}
 	return nil, false
