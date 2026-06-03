@@ -1739,13 +1739,19 @@ func main() {
 						// one interval; stamping first arms it correctly on cycle 1.
 						closeFraction, _, manualRegime, manualOK := runManualCloseEval(sc, stratState, cfg, notifier, logger)
 						if manualOK {
+							mu.Lock()
+							// Refresh the strategy-level live regime every cycle, like
+							// the other five dispatches do — this is what the Phase 6
+							// status line and dashboard read (stratState.Regime). Without
+							// it a manual strategy reports regime=- even with an open,
+							// correctly-stamped position (#872 review).
+							syncStrategyRegimeState(stratState, manualRegime, cfg.Regime)
 							// Stamp the current regime onto the position the first
 							// time we observe one. Idempotent — stampPosition-
 							// RegimeFromPayload only writes when pos.Regime == "" (and
 							// pos.RegimeWindows is empty) — so this fires exactly once,
 							// on the first close-eval cycle after open, regardless of
 							// live vs --record-only.
-							mu.Lock()
 							stampPositionRegimeIfOpened(stratState, sc.Symbol, manualRegime, sc, cfg.Regime)
 							mu.Unlock()
 						}
