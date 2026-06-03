@@ -174,7 +174,7 @@ func formatPositionsResponse(state *AppState, prices map[string]float64) string 
 }
 
 // formatPnLResponse reports total / per-platform / per-strategy P&L. Call under RLock.
-func formatPnLResponse(state *AppState, prices map[string]float64, lifetime map[string]LifetimeTradeStats) string {
+func formatPnLResponse(state *AppState, prices map[string]float64) string {
 	type agg struct{ value, capital float64 }
 	byPlatform := map[string]*agg{}
 	platforms := []string{}
@@ -536,11 +536,10 @@ func (d *DiscordNotifier) buildPnL() string {
 	if d.ss == nil {
 		return "status server not wired"
 	}
-	lifetime := d.lifetimeStats()
 	prices := d.ss.fetchLiveMarkPrices()
 	d.ss.mu.RLock()
 	defer d.ss.mu.RUnlock()
-	return formatPnLResponse(d.ss.state, prices, lifetime)
+	return formatPnLResponse(d.ss.state, prices)
 }
 
 func (d *DiscordNotifier) buildLeaderboard(topN int) string {

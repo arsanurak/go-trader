@@ -108,7 +108,7 @@ func TestFormatPositionsResponse(t *testing.T) {
 
 func TestFormatPnLResponse(t *testing.T) {
 	// hl-a: pv = 1*60 = 60, cap 50 -> +10 (+20%). hl-b: pv = 50, cap 50 -> 0.
-	got := formatPnLResponse(testPnLState(), map[string]float64{"BTC": 60}, nil)
+	got := formatPnLResponse(testPnLState(), map[string]float64{"BTC": 60})
 	if !strings.Contains(got, "+10.00") || !strings.Contains(got, "+20.00%") {
 		t.Errorf("expected hl-a pnl +10 (+20%%), got: %s", got)
 	}
