@@ -1726,13 +1726,48 @@ func main() {
 							break
 						}
 						if pos != nil && hyperliquidIsLive(sc.Args) {
+							// Protection-sync must run before the close evaluator so
+							// the latter sees on-chain-reconciled qty. Post-TP SL
+							// adjustment is deferred to the post-stamp block below so
+							// regime-keyed *_atr_regime SL sees pos.Regime (#878 review).
 							runHyperliquidProtectionSync(sc, stratState, stateDB, sc.Symbol, &mu, notifier, logger, "HL manual protection synced", hlReconcileFillHintsJSON)
+						}
+						// #872: run the close evaluator and stamp the regime BEFORE
+						// arming the post-TP SL / ratchet / trailing walker below. The
+						// regime is the close-eval's classifier output, and the
+						// regime-keyed close features (trailing_tp_ratchet_regime,
+						// *_atr_regime SL/TP) resolve their tier table / trail distance
+						// from pos.Regime. Arming first (the previous order) left
+						// pos.Regime == "" on the first post-open cycle, so the regime
+						// trail no-op'd for one interval; stamping first arms it
+						// correctly on cycle 1.
+						closeFraction, _, manualRegime, manualOK := runManualCloseEval(sc, stratState, cfg, notifier, logger)
+						if manualOK {
+							mu.Lock()
+							// Refresh the strategy-level live regime every cycle, like
+							// the other five dispatches do — this is what the Phase 6
+							// status line and dashboard read (stratState.Regime). Without
+							// it a manual strategy reports regime=- even with an open,
+							// correctly-stamped position (#872 review).
+							syncStrategyRegimeState(stratState, manualRegime, cfg.Regime)
+							// Stamp the current regime onto the position the first
+							// time we observe one. Idempotent — stampPosition-
+							// RegimeFromPayload only writes when pos.Regime == "" (and
+							// pos.RegimeWindows is empty) — so this fires exactly once,
+							// on the first close-eval cycle after open, regardless of
+							// live vs --record-only.
+							stampPositionRegimeIfOpened(stratState, sc.Symbol, manualRegime, sc, cfg.Regime)
+							mu.Unlock()
+						}
+						if pos != nil && hyperliquidIsLive(sc.Args) {
+							// Manual ratchet + trailing walker run live-only by design
+							// (gated on hyperliquidIsLive): manual is a live trading
+							// tool, so a record-only manual config intentionally does
+							// not ratchet (unlike perps, which also runs a paper
+							// trailing path at main.go ~1537). Runs after the stamp
+							// above so regime-keyed trails / post-TP SL see pos.Regime
+							// on cycle 1.
 							runPostTPStopLossAdjustment(sc, stratState, sc.Symbol, prices[sc.Symbol], cfg, &mu, notifier, logger, hlOnChainAbsQty)
-							// Manual ratchet + trailing walker run live-only by design (this
-							// whole block is gated on hyperliquidIsLive above): manual is a
-							// live trading tool, so a record-only manual config intentionally
-							// does not ratchet (unlike perps, which also runs a paper trailing
-							// path at main.go ~1537).
 							mark := prices[sc.Symbol]
 							if mark > 0 && strategyUsesTrailingTPRatchetClose(sc) {
 								applyTrailingTPRatchet(sc, stratState, sc.Symbol, mark, &mu, logger)
@@ -1757,7 +1792,7 @@ func main() {
 								mu.Unlock()
 							}
 						}
-						if closeFraction, _, ok := runManualCloseEval(sc, stratState, cfg, notifier, logger); ok && closeFraction > 0 {
+						if manualOK && closeFraction > 0 {
 							mu.RLock()
 							pos = stratState.Positions[sc.Symbol]
 							mu.RUnlock()
