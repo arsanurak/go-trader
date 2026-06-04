@@ -88,7 +88,7 @@ var bidirectionalPerpsStrategies = map[string]bool{
 	"liquidity_sweeps":    true, // emits short on stop-hunt wicks above swing highs (#649)
 	"bear_pullback_st":    true, // dedicated short-only strategy for bear-market rally rejections (#651)
 	"vwap_rejection_st":   true, // dedicated short-only strategy for VWAP/EMA rally rejections in bearish regime (#652)
-	"consolidation_range": true, // emits short at the top edge of a consolidation box (breakout follower)
+	"consolidation_range": true, // emits short at the top edge of a consolidation box (range-edge mean-reversion)
 }
 
 func isBidirectionalPerpsStrategy(id string) bool {

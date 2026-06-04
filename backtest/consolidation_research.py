@@ -65,7 +65,11 @@ def true_range(df: pd.DataFrame) -> pd.Series:
 
 
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    return true_range(df).rolling(window=period, min_periods=1).mean()
+    # Mirror production standard_atr (#887): whole-number round only for
+    # BTC-scale assets (ATR >= 100) so research geometry matches the live
+    # stamped ATR; sub-100 assets pass through unrounded.
+    series = true_range(df).rolling(window=period, min_periods=1).mean()
+    return series.where(series < 100, series.round(0))
 
 
 # --------------------------------------------------------------------------- #

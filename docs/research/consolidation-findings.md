@@ -300,6 +300,11 @@ config's trades by date (IS = first 60%, OOS = rest) to catch overfitting.
 
 ### Key insight — it's a breakout follower, not a range fade
 
+> **Superseded below** — see "Production backtest reconciliation" and the final verdict.
+> On the production `run_backtest.py` engine this config loses; the shipped strategy is a
+> range-edge mean-reversion entry with a trailing-ATR exit, kept here as the chronological
+> research record.
+
 Every top config has **tp1_frac = 0**: scaling out at the box mean *hurts*. The edge is
 **entering near a consolidation edge with a tight stop and trailing the FULL position** to
 ride breakouts. The original "buy floor / sell ceiling / TP at mean" mean-reversion thesis
