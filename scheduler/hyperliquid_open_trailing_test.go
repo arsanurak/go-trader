@@ -99,4 +99,59 @@ func TestArmTrailingStopAtOpenNow(t *testing.T) {
 	if st.Positions["ETH"].StopLossOID != 0 {
 		t.Errorf("capped: SL OID set (%d) despite deferral", st.Positions["ETH"].StopLossOID)
 	}
+
+	// Immediate-fill path: price was already through the just-computed trigger at
+	// submit (HL fills it on placement) → book a trailing_stop_loss_immediate
+	// close now, returning trades=1 + detail rather than leaving a phantom open
+	// position for a later reconcile to mislabel.
+	runHyperliquidUpdateStopLossFunc = func(script, symbol, side string, size, triggerPx float64, cancelStopLossOID int64) (*HyperliquidStopLossUpdateResult, string, error) {
+		return &HyperliquidStopLossUpdateResult{StopLossFilledImmediately: true, StopLossTriggerPx: triggerPx}, "", nil
+	}
+	st = mkState(0, 0)
+	n, d := armTrailingStopAtOpenNow(sc, st, "ETH", 2000, map[string]float64{"ETH": 0}, 2, &mu, nil, newTestLogger(t))
+	if n != 1 {
+		t.Errorf("immediate-fill: trades = %d, want 1 (close booked)", n)
+	}
+	if d == "" {
+		t.Errorf("immediate-fill: expected a non-empty detail string")
+	}
+	if pos := st.Positions["ETH"]; pos != nil && pos.Quantity > 0 {
+		t.Errorf("immediate-fill: position still open (qty=%.4f), want flat", pos.Quantity)
+	}
+}
+
+// A regime-aware trailing owner (trailing_stop_atr_regime) resolves its distance
+// from the stamped pos.Regime and arms inline at open the same way the scalar
+// trailing_stop_atr_mult owner does — exercising the regime branch of
+// effectiveTrailingStopPct.
+func TestArmTrailingStopAtOpenNowRegime(t *testing.T) {
+	old := runHyperliquidUpdateStopLossFunc
+	defer func() { runHyperliquidUpdateStopLossFunc = old }()
+
+	var gotSize, gotTrigger float64
+	runHyperliquidUpdateStopLossFunc = func(script, symbol, side string, size, triggerPx float64, cancelStopLossOID int64) (*HyperliquidStopLossUpdateResult, string, error) {
+		gotSize, gotTrigger = size, triggerPx
+		return &HyperliquidStopLossUpdateResult{StopLossOID: 777, StopLossTriggerPx: triggerPx}, "", nil
+	}
+	// "trending" → 2.0× ATR; same geometry as the scalar test: 2.0*50/2000 = 5%,
+	// trigger 2000 * 0.95 = 1900.
+	regimeBlock := &RegimeATRBlock{TrendRegime: map[string]RegimeATREntry{
+		"trending": {ATR: 2.0},
+		"ranging":  {ATR: 1.0},
+	}}
+	sc := StrategyConfig{ID: "hl-eth", Type: "perps", Platform: "hyperliquid", Script: "x.py", Args: []string{"x.py", "ETH", "1h", "--mode=live"}, TrailingStopATRRegime: regimeBlock}
+	st := &StrategyState{ID: "hl-eth", Positions: map[string]*Position{
+		"ETH": {Symbol: "ETH", Side: "long", Quantity: 2, InitialQuantity: 2, AvgCost: 2000, EntryATR: 50, RiskAnchorPrice: 2000, Regime: "trending"},
+	}}
+	var mu sync.RWMutex
+	armTrailingStopAtOpenNow(sc, st, "ETH", 2000, map[string]float64{"ETH": 0}, 2, &mu, nil, newTestLogger(t))
+	if !approxEq(gotSize, 2) {
+		t.Errorf("size = %v, want 2", gotSize)
+	}
+	if !approxEq(gotTrigger, 1900) {
+		t.Errorf("trigger = %v, want 1900 (regime trending 2.0x ATR)", gotTrigger)
+	}
+	if got := st.Positions["ETH"].StopLossOID; got != 777 {
+		t.Errorf("pos.StopLossOID = %d, want 777 (regime owner armed inline)", got)
+	}
 }

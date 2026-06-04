@@ -23,10 +23,13 @@ import (
 // Correctness over a single steady-state path: it reuses the exact walker
 // primitive (runHyperliquidTrailingStopUpdate) and result handler
 // (applyTrailingStopUpdateResult) the next-cycle walker uses, so the inline
-// trigger is byte-identical to what the deferred arming would have produced and
-// there is only one stop-placement implementation that can't drift. A fresh
-// position carries currentTrigger==0/currentOID==0, so the primitive computes
-// the initial trigger (AvgCost-seeded high-water) and rests a new SL without
+// trigger comes from the identical formula and code path the deferred arming
+// would have used — the only difference is this cycle's mark vs. the next
+// cycle's, and arming sooner is strictly safer. One stop-placement
+// implementation means the two can't drift. A fresh position carries
+// currentTrigger==0/currentOID==0, so the primitive computes the initial
+// trigger from a max(AvgCost, mark)-seeded high-water (the walker's own ratchet,
+// so positive open slippage is handled the same way) and rests a new SL without
 // needing forceResize.
 //
 // Idempotent and tightly scoped: it no-ops unless the position is a live
