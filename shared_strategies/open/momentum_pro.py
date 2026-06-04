@@ -99,14 +99,15 @@ def momentum_pro_core(
     else:
         vol_confirm = pd.Series(True, index=result.index)
 
-    touch_mult = 1.0 + pullback_touch_buffer_pct
-    # Long pullback: a recent prior bar's low dipped to/under EMA(fast).
-    long_touch = low < (ema_fast_s * touch_mult)
+    # Positive buffer *tightens* the gate: the bar must pierce EMA(fast) by the
+    # fraction (low below for longs, high above for shorts). buffer=0 → plain touch.
+    # Long pullback: a recent prior bar's low pierced below EMA(fast).
+    long_touch = low < (ema_fast_s * (1.0 - pullback_touch_buffer_pct))
     long_pullback = (
         long_touch.shift(1).rolling(window=pullback_window).max().fillna(0).astype(bool)
     )
-    # Short pullback: a recent prior bar's high poked up to/over EMA(fast).
-    short_touch = high > (ema_fast_s / touch_mult)
+    # Short pullback: a recent prior bar's high pierced above EMA(fast).
+    short_touch = high > (ema_fast_s * (1.0 + pullback_touch_buffer_pct))
     short_pullback = (
         short_touch.shift(1).rolling(window=pullback_window).max().fillna(0).astype(bool)
     )

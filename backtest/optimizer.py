@@ -448,6 +448,9 @@ DEFAULT_PARAM_RANGES = {
     "momentum_pro": {
         "ema_fast": [13, 20, 26],
         "ema_mid": [34, 50, 80],
+        # Single value (243 combos). Present so max_indicator_lookback provisions
+        # 200 warmup bars per fold and the EMA(200) regime gate is primed OOS.
+        "ema_long": [200],
         "adx_threshold": [18.0, 20.0, 25.0],
         "pullback_window": [4, 6, 8],
         "vol_mult": [0.0, 1.2, 1.5],

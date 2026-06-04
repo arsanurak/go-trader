@@ -618,6 +618,12 @@ def main():
         )
         live_stop_kwargs = {k: live_kwargs[k] for k in stop_keys if k in live_kwargs}
 
+    # CLI ATR-stop flags apply in single mode too; --config refs win on collision.
+    if args.stop_loss_atr_mult is not None:
+        live_stop_kwargs.setdefault("stop_loss_atr_mult", args.stop_loss_atr_mult)
+    if args.trailing_stop_atr_mult is not None:
+        live_stop_kwargs.setdefault("trailing_stop_atr_mult", args.trailing_stop_atr_mult)
+
     reg = load_registry(args.registry)
 
     if args.mode == "single":
