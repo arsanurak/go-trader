@@ -1450,7 +1450,7 @@ func main() {
 					mu.Lock()
 					allowed, reason := CheckRisk(&sc, stratState, pv, prices, logger, riskAssist)
 					cbSnapshot := perStrategyCircuitBreakerSnapshot{}
-					if !allowed {
+					if !allowed && isFreshPerStrategyCircuitBreaker(reason) {
 						cbSnapshot = snapshotPerStrategyCircuitBreaker(stratState, prices)
 					}
 					mu.Unlock()

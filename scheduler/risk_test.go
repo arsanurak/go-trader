@@ -2660,3 +2660,21 @@ func TestFormatPerStrategyCircuitBreakerBlock_IncludesTriageSections(t *testing.
 		t.Fatalf("circuit-breaker message len = %d, want under Discord limit; msg:\n%s", len(msg), msg)
 	}
 }
+
+func TestCircuitBreakerStrategyLabel_SkipsFlagTimeframe(t *testing.T) {
+	sc := StrategyConfig{
+		ID:       "deribit-btc-options",
+		Type:     "options",
+		Platform: "deribit",
+		Args:     []string{"wheel", "BTC", "--platform=deribit"},
+	}
+	got := circuitBreakerStrategyLabel(sc)
+	if strings.Contains(got, "--platform=deribit") {
+		t.Fatalf("strategy label rendered flag as timeframe: %q", got)
+	}
+	for _, want := range []string{"Deribit", "BTC", "wheel", "options"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("strategy label missing %q: %q", want, got)
+		}
+	}
+}

@@ -170,15 +170,6 @@ func snapshotPerStrategyCircuitBreaker(s *StrategyState, prices map[string]float
 	return snap
 }
 
-func formatPerStrategyCircuitBreakerMessage(strategyID, reason string, portfolioValue float64) string {
-	sc := StrategyConfig{ID: strategyID}
-	return formatPerStrategyCircuitBreakerBlock(perStrategyCircuitBreakerFormatInput{
-		Strategy:      sc,
-		Reason:        reason,
-		StrategyValue: portfolioValue,
-	})
-}
-
 func formatPerStrategyCircuitBreakerBlock(in perStrategyCircuitBreakerFormatInput) string {
 	now := in.Snapshot.Now.UTC()
 	if now.IsZero() {
@@ -343,7 +334,7 @@ func circuitBreakerTimeframe(sc StrategyConfig) string {
 	if sc.Timeframe != "" {
 		return sc.Timeframe
 	}
-	if len(sc.Args) > 2 {
+	if len(sc.Args) > 2 && !strings.HasPrefix(sc.Args[2], "--") {
 		return sc.Args[2]
 	}
 	return ""
