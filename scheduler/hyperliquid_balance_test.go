@@ -1447,6 +1447,93 @@ func TestReconcileSharedCoin_AllPositionsClosedExternally_CreditsPeerCash(t *tes
 	}
 }
 
+func TestHlReconcileExternalClosePx(t *testing.T) {
+	const mark = 63564.5
+	const fillPx = 63597.0
+	lookup := HLFillLookup{Px: fillPx, Fee: 1.2, Count: 1}
+
+	if got := hlReconcileExternalClosePx(mark, lookup, true); got != fillPx {
+		t.Errorf("with fill Px = %v, got %v", fillPx, got)
+	}
+	if got := hlReconcileExternalClosePx(mark, HLFillLookup{Fee: 1.2, Count: 1}, true); got != mark {
+		t.Errorf("missing Px should fall back to mark %v, got %v", mark, got)
+	}
+	if got := hlReconcileExternalClosePx(mark, lookup, false); got != mark {
+		t.Errorf("useFillFee=false should fall back to mark %v, got %v", mark, got)
+	}
+}
+
+// TestReconcileSharedCoin_ExternalCloseUsesFillPriceWhenAvailable is the #909
+// regression: when userFills matches an external close and returns Px, book at
+// the fill price instead of the cycle mark.
+func TestReconcileSharedCoin_ExternalCloseUsesFillPriceWhenAvailable(t *testing.T) {
+	const peerStartCash = 500.0
+	const peerQty = 0.5
+	const peerAvgCost = 63000.0
+	const mark = 63564.5
+	const fillPx = 63597.0
+
+	state := &AppState{
+		Strategies: map[string]*StrategyState{
+			"hl-owner-btc": {
+				ID: "hl-owner-btc", Cash: 10000, Platform: "hyperliquid",
+				Positions: map[string]*Position{
+					"BTC": {Symbol: "BTC", Quantity: 1.0, AvgCost: 63000, Side: "long",
+						Multiplier: 1, Leverage: 10, OwnerStrategyID: "hl-owner-btc",
+						StopLossOID: 7, StopLossTriggerPx: 62000},
+				},
+			},
+			"hl-peer-btc": {
+				ID: "hl-peer-btc", Cash: peerStartCash, Platform: "hyperliquid",
+				Positions: map[string]*Position{
+					"BTC": {Symbol: "BTC", Quantity: peerQty, AvgCost: peerAvgCost, Side: "long",
+						Multiplier: 1, Leverage: 10, OwnerStrategyID: "hl-peer-btc"},
+				},
+			},
+		},
+	}
+
+	allStrategies := []StrategyConfig{
+		{ID: "hl-owner-btc", Platform: "hyperliquid", Type: "perps", Args: []string{"tema", "BTC", "1h", "--mode=live"}},
+		{ID: "hl-peer-btc", Platform: "hyperliquid", Type: "perps", Args: []string{"rmc", "BTC", "1h", "--mode=live"}},
+	}
+	positions := []HLPosition{}
+	prices := map[string]float64{"BTC": mark}
+	wantPeerFee := 0.42
+
+	origLookup := lookupHyperliquidReconcileFillFee
+	defer func() { lookupHyperliquidReconcileFillFee = origLookup }()
+	lookupHyperliquidReconcileFillFee = func(_, coin string, oid int64, qty float64) (HLFillLookup, bool) {
+		if oid == 7 && coin == "BTC" {
+			return HLFillLookup{Fee: 0.02, FilledQty: 1.0, Px: 62000, Count: 1, OID: 7}, true
+		}
+		if oid == 0 && coin == "BTC" && math.Abs(qty-peerQty) < 1e-9 {
+			return HLFillLookup{Fee: wantPeerFee, Px: fillPx, Count: 1, OID: 4242}, true
+		}
+		return HLFillLookup{}, false
+	}
+
+	logMgr, _ := NewLogManager(t.TempDir())
+	var mu sync.RWMutex
+	_, _, _ = reconcileHyperliquidAccountPositions(allStrategies, allStrategies, state, &mu, logMgr, positions, prices, "0xtest", nil, false)
+
+	peer := state.Strategies["hl-peer-btc"]
+	if len(peer.ClosedPositions) != 1 {
+		t.Fatalf("peer ClosedPositions = %d, want 1", len(peer.ClosedPositions))
+	}
+	cp := peer.ClosedPositions[0]
+	if cp.ClosePrice != fillPx {
+		t.Errorf("ClosePrice = %v, want fill %v (not mark %v)", cp.ClosePrice, fillPx, mark)
+	}
+	wantPnL := peerQty*(fillPx-peerAvgCost) - wantPeerFee
+	if math.Abs(cp.RealizedPnL-wantPnL) > 1e-6 {
+		t.Errorf("RealizedPnL = %v, want %v", cp.RealizedPnL, wantPnL)
+	}
+	if math.Abs(peer.Cash-(peerStartCash+wantPnL)) > 1e-6 {
+		t.Errorf("peer Cash = %v, want %v", peer.Cash, peerStartCash+wantPnL)
+	}
+}
+
 // TestReconcileSharedCoin_Detector1_WrongOIDInUserfillsBooksExternal is a #756
 // regression: userFills hit for the SL lookup query but with a non-matching OID
 // must not book hl_sync_stop_loss — fall back to mark-based hl_sync_external.

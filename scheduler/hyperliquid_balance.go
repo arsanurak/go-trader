@@ -56,6 +56,15 @@ func hlReconcileSLFillConfirmed(lookup HLFillLookup, useFillFee bool, stopLossOI
 	return useFillFee && lookup.OID == stopLossOID && lookup.FilledQty > 1e-9
 }
 
+// hlReconcileExternalClosePx prefers the matched userFills price when available
+// (#909), otherwise falls back to mark.
+func hlReconcileExternalClosePx(mark float64, lookup HLFillLookup, useFillFee bool) float64 {
+	if useFillFee && lookup.Px > 0 {
+		return lookup.Px
+	}
+	return mark
+}
+
 var hlMainnetURL = "https://api.hyperliquid.xyz"
 
 // hyperliquidLiveCloseScript is the path to the Python close helper. Exposed as
@@ -986,7 +995,8 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 						if mark, ok := prices[coin]; ok && mark > 0 {
 							lookupExt, useFillFeeExt := resolveFee(coin, 0, pos.Quantity)
 							logHyperliquidReconcileFillLookup(logger, coin, 0, pos.Quantity, lookupExt, useFillFeeExt)
-							if recordPerpsExternalCloseWithFillFee(ss, coin, mark, lookupExt.Fee, useFillFeeExt, "", "hl_sync_external", logger) {
+							closePx := hlReconcileExternalClosePx(mark, lookupExt, useFillFeeExt)
+							if recordPerpsExternalCloseWithFillFee(ss, coin, closePx, lookupExt.Fee, useFillFeeExt, "", "hl_sync_external", logger) {
 								changed = true
 							}
 						} else {
@@ -1010,7 +1020,8 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 					// they exist to keep cash bookkeeping in sync.
 					lookup, useFillFee := resolveFee(coin, 0, pos.Quantity)
 					logHyperliquidReconcileFillLookup(logger, coin, 0, pos.Quantity, lookup, useFillFee)
-					if recordPerpsExternalCloseWithFillFee(ss, coin, mark, lookup.Fee, useFillFee, "", "hl_sync_external", logger) {
+					closePx := hlReconcileExternalClosePx(mark, lookup, useFillFee)
+					if recordPerpsExternalCloseWithFillFee(ss, coin, closePx, lookup.Fee, useFillFee, "", "hl_sync_external", logger) {
 						changed = true
 					}
 				} else {
@@ -1112,7 +1123,8 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 							if mark, ok := prices[coin]; ok && mark > 0 {
 								lookupExt, useFillFeeExt := resolveFee(coin, 0, slOwnerPos.Quantity)
 								logHyperliquidReconcileFillLookup(logger, coin, 0, slOwnerPos.Quantity, lookupExt, useFillFeeExt)
-								if recordPerpsExternalCloseWithFillFee(ownerSS, coin, mark, lookupExt.Fee, useFillFeeExt, "", "hl_sync_external", logger) {
+								closePx := hlReconcileExternalClosePx(mark, lookupExt, useFillFeeExt)
+								if recordPerpsExternalCloseWithFillFee(ownerSS, coin, closePx, lookupExt.Fee, useFillFeeExt, "", "hl_sync_external", logger) {
 									changed = true
 									virtualQty = expectedResidual
 									delta = virtualQty - onChainQty
@@ -1204,7 +1216,8 @@ func reconcileHyperliquidAccountPositions(dueStrategies, allStrategies []Strateg
 							if useFillFee && lookup.OID > 0 {
 								detector3OID = strconv.FormatInt(lookup.OID, 10)
 							}
-							if recordPerpsExternalPartialCloseWithFillFee(candidateSS, coin, closeQty, mark, lookup.Fee, useFillFee, detector3OID, "hl_sync_external_partial", logger) {
+							closePx := hlReconcileExternalClosePx(mark, lookup, useFillFee)
+							if recordPerpsExternalPartialCloseWithFillFee(candidateSS, coin, closeQty, closePx, lookup.Fee, useFillFee, detector3OID, "hl_sync_external_partial", logger) {
 								changed = true
 								if closeSide == "long" {
 									virtualQty -= closeQty
