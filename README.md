@@ -120,7 +120,7 @@ Use `./go-trader init` (interactive) or `./go-trader init --json '...'` (scripte
 
 ```json
 {
-  "config_version": 14,
+  "config_version": 15,
   "interval_seconds": 3600,
   "db_file": "scheduler/state.db",
   "log_dir": "logs",
@@ -152,7 +152,7 @@ Use `./go-trader init` (interactive) or `./go-trader init --json '...'` (scripte
 }
 ```
 
-`config_version` is bumped automatically by `go-trader init` and migrated on startup. Recent migrations: v9 added HL perps stop-loss / margin-mode fields; v11 added the `regime` block; v13 reshaped `open_strategy`/`close_strategies` into co-located `{name, params}` refs; v14 replaced `allow_shorts` with the `direction` enum.
+`config_version` is bumped automatically by `go-trader init` and migrated on startup. Recent migrations: v9 added HL perps stop-loss / margin-mode fields; v11 added the `regime` block; v13 reshaped `open_strategy`/`close_strategies` into co-located `{name, params}` refs; v14 replaced `allow_shorts` with the `direction` enum; v15 collapsed `close_strategies` to a single `close_strategy` ref and canonicalized close params (`tiers`→`tp_tiers`, `atr`/`multiple`/`fraction`→`atr_multiple`/`close_fraction`).
 
 ### Portfolio Risk
 
