@@ -198,19 +198,19 @@ func TestSharedWalletDriftTracker_ConfirmThenThrottleThenRecover(t *testing.T) {
 	tr := &SharedWalletDriftTracker{}
 	now := time.Now().UTC()
 	// First detection is within the confirmation window → no alert yet.
-	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, now); notify {
+	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, "BTC", now); notify {
 		t.Fatal("first detection must NOT alert (confirmation window)")
 	}
 	// Second consecutive detection crosses the threshold → alert.
-	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, now.Add(time.Minute)); !notify {
+	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, "BTC", now.Add(time.Minute)); !notify {
 		t.Fatal("second consecutive detection must alert")
 	}
 	// Same drift again → throttled (no signature change, not 10th, <1h).
-	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, now.Add(2*time.Minute)); notify {
+	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, "BTC", now.Add(2*time.Minute)); notify {
 		t.Error("third identical detection should be throttled")
 	}
 	// Materially changed drift → re-alert.
-	if notify, _ := tr.Record("hyperliquid/0xabc", 9.00, now.Add(3*time.Minute)); !notify {
+	if notify, _ := tr.Record("hyperliquid/0xabc", 9.00, "BTC", now.Add(3*time.Minute)); !notify {
 		t.Error("materially changed drift should re-alert")
 	}
 	// Recovery: within tolerance clears and reports recovered.
@@ -229,7 +229,7 @@ func TestSharedWalletDriftTracker_ConfirmThenThrottleThenRecover(t *testing.T) {
 func TestSharedWalletDriftTracker_OneCycleTransientSilent(t *testing.T) {
 	tr := &SharedWalletDriftTracker{}
 	now := time.Now().UTC()
-	if notify, _ := tr.Record("hyperliquid/0xabc", 25.00, now); notify {
+	if notify, _ := tr.Record("hyperliquid/0xabc", 25.00, "BTC", now); notify {
 		t.Fatal("single transient detection must not alert")
 	}
 	// Next cycle the book catches up → within tolerance → Clear.
@@ -282,5 +282,152 @@ func TestFetchHyperliquidState_ParsesUnrealizedPnL(t *testing.T) {
 	}
 	if len(positions) != 1 || math.Abs(positions[0].UnrealizedPnL-42.50) > 1e-9 {
 		t.Fatalf("expected UnrealizedPnL 42.50, got %+v", positions)
+	}
+}
+
+// Two DIFFERENT one-cycle transients on consecutive cycles (e.g. a resting
+// limit fill on BTC, then an external manual open on ETH) must not be read as
+// one persistent orphan: the streak is keyed on the orphan-coin signature, so
+// neither alerts and no recovery notice fires (#920 review).
+func TestSharedWalletDriftTracker_DistinctConsecutiveTransientsNoAlert(t *testing.T) {
+	tr := &SharedWalletDriftTracker{}
+	now := time.Now().UTC()
+	if notify, count := tr.Record("hyperliquid/0xabc", 25.00, "BTC", now); notify || count != 1 {
+		t.Fatalf("first transient: want no alert at count 1, got notify=%v count=%d", notify, count)
+	}
+	// Next cycle a DIFFERENT orphan appears → streak restarts, still no alert.
+	if notify, count := tr.Record("hyperliquid/0xabc", 12.00, "ETH", now.Add(time.Minute)); notify || count != 1 {
+		t.Fatalf("second distinct transient: want no alert at count 1, got notify=%v count=%d", notify, count)
+	}
+	// Clean cycle → never alerted, so no recovery notice either.
+	if recovered, _ := tr.Clear("hyperliquid/0xabc"); recovered {
+		t.Error("never-alerted streak must not fire a recovery notice")
+	}
+}
+
+// A persistent orphan keeps the same coin signature even as its drift magnitude
+// moves with the mark each cycle — it must still alert on the second cycle.
+func TestSharedWalletDriftTracker_SameOrphanChangingMagnitudeStillAlerts(t *testing.T) {
+	tr := &SharedWalletDriftTracker{}
+	now := time.Now().UTC()
+	if notify, _ := tr.Record("hyperliquid/0xabc", 25.00, "SOL", now); notify {
+		t.Fatal("first detection must not alert")
+	}
+	if notify, count := tr.Record("hyperliquid/0xabc", 31.40, "SOL", now.Add(time.Minute)); !notify || count != 2 {
+		t.Fatalf("same orphan second cycle must alert at count 2, got notify=%v count=%d", notify, count)
+	}
+}
+
+// --- computeSubsetDisplayValue (#920 review: TOTAL must reconcile with rows) ---
+
+// A partial slice of a shared wallet (per-asset summary, leaderboard top-N)
+// whose members carry exchange-derived values must total to the SAME values the
+// rows show — not the modeled virtual sum.
+func TestComputeSubsetDisplayValue_GatedPartialSliceMatchesRows(t *testing.T) {
+	t.Setenv("HYPERLIQUID_ACCOUNT_ADDRESS", "0xtest")
+	allStrategies := []StrategyConfig{
+		{ID: "hl-btc", Platform: "hyperliquid", Type: "perps", Args: []string{"sma", "BTC", "1h", "--mode=live"}, Capital: 500},
+		{ID: "hl-eth", Platform: "hyperliquid", Type: "perps", Args: []string{"rsi", "ETH", "1h", "--mode=live"}, Capital: 500},
+	}
+	state := &AppState{Strategies: map[string]*StrategyState{
+		"hl-btc": {ID: "hl-btc", Cash: 350, Positions: map[string]*Position{}, SharedWalletValue: 650, SharedWalletValueSet: true},
+		"hl-eth": {ID: "hl-eth", Cash: 500, Positions: map[string]*Position{}, SharedWalletValue: 350, SharedWalletValueSet: true},
+	}}
+	walletBalances := map[SharedWalletKey]float64{{Platform: "hyperliquid", Account: "0xtest"}: 1000}
+	accountShared := detectSharedWallets(allStrategies)
+
+	// Per-asset slice: just hl-btc. The single row shows 650; the TOTAL must too
+	// (the old virtual-sum path would show the modeled 350).
+	got, fb := computeSubsetDisplayValue(allStrategies[:1], state, nil, walletBalances, accountShared)
+	if got != 650 {
+		t.Errorf("gated partial slice: want 650 (= row value), got %.2f", got)
+	}
+	if fb {
+		t.Error("gated partial slice: expected usedFallback=false")
+	}
+
+	// Full wallet: gated values sum to the real balance exactly.
+	got, _ = computeSubsetDisplayValue(allStrategies, state, nil, walletBalances, accountShared)
+	if got != 1000 {
+		t.Errorf("gated full wallet: want 1000 (real balance), got %.2f", got)
+	}
+}
+
+// Gated wallet members plus a non-shared strategy: gated sum + modeled PV.
+func TestComputeSubsetDisplayValue_MixedGatedAndNonShared(t *testing.T) {
+	t.Setenv("HYPERLIQUID_ACCOUNT_ADDRESS", "0xtest")
+	allStrategies := []StrategyConfig{
+		{ID: "hl-btc", Platform: "hyperliquid", Type: "perps", Args: []string{"sma", "BTC", "1h", "--mode=live"}, Capital: 500},
+		{ID: "hl-eth", Platform: "hyperliquid", Type: "perps", Args: []string{"rsi", "ETH", "1h", "--mode=live"}, Capital: 500},
+		{ID: "spot-btc", Platform: "binanceus", Type: "spot", Capital: 2000},
+	}
+	state := &AppState{Strategies: map[string]*StrategyState{
+		"hl-btc":   {ID: "hl-btc", Cash: 350, Positions: map[string]*Position{}, SharedWalletValue: 650, SharedWalletValueSet: true},
+		"hl-eth":   {ID: "hl-eth", Cash: 500, Positions: map[string]*Position{}, SharedWalletValue: 350, SharedWalletValueSet: true},
+		"spot-btc": {ID: "spot-btc", Cash: 2000, Positions: map[string]*Position{}},
+	}}
+	walletBalances := map[SharedWalletKey]float64{{Platform: "hyperliquid", Account: "0xtest"}: 1000}
+	accountShared := detectSharedWallets(allStrategies)
+
+	got, fb := computeSubsetDisplayValue(allStrategies, state, nil, walletBalances, accountShared)
+	if want := 650.0 + 350.0 + 2000.0; got != want {
+		t.Errorf("mixed subset: want %.2f, got %.2f", want, got)
+	}
+	if fb {
+		t.Error("mixed subset: expected usedFallback=false")
+	}
+}
+
+// With no gates set (reconcile skipped — fetch failure, or summary CLI where no
+// reconcile ran), the function must be byte-identical to the #915
+// computeSubsetPortfolioValue semantics, including the fallback flag.
+func TestComputeSubsetDisplayValue_UngatedFallsBackToSubsetSemantics(t *testing.T) {
+	t.Setenv("HYPERLIQUID_ACCOUNT_ADDRESS", "0xtest")
+	allStrategies := []StrategyConfig{
+		{ID: "hl-btc", Platform: "hyperliquid", Type: "perps", Args: []string{"sma", "BTC", "1h", "--mode=live"}, Capital: 500},
+		{ID: "hl-eth", Platform: "hyperliquid", Type: "perps", Args: []string{"rsi", "ETH", "1h", "--mode=live"}, Capital: 500},
+	}
+	state := &AppState{Strategies: map[string]*StrategyState{
+		"hl-btc": {ID: "hl-btc", Cash: 400, Positions: map[string]*Position{}},
+		"hl-eth": {ID: "hl-eth", Cash: 600, Positions: map[string]*Position{}},
+	}}
+	accountShared := detectSharedWallets(allStrategies)
+	walletBalances := map[SharedWalletKey]float64{{Platform: "hyperliquid", Account: "0xtest"}: 800}
+
+	// Fully contained, balance present → real-balance dedup (matches #915).
+	got, fb := computeSubsetDisplayValue(allStrategies, state, nil, walletBalances, accountShared)
+	if got != 800 || fb {
+		t.Errorf("ungated dedup: want 800/false, got %.2f/%v", got, fb)
+	}
+	// Balance missing → virtual-sum fallback with usedFallback=true.
+	got, fb = computeSubsetDisplayValue(allStrategies, state, nil, nil, accountShared)
+	if got != 1000 || !fb {
+		t.Errorf("ungated missing balance: want 1000/true, got %.2f/%v", got, fb)
+	}
+}
+
+// A gated same-account live manual strategy is OUTSIDE detectSharedWallets
+// membership but INSIDE the reconciled wallet balance. Summing display values
+// must yield exactly the balance — the old path added the manual's modeled PV
+// on top of the wallet balance (double count).
+func TestComputeSubsetDisplayValue_GatedManualNoDoubleCount(t *testing.T) {
+	t.Setenv("HYPERLIQUID_ACCOUNT_ADDRESS", "0xtest")
+	allStrategies := []StrategyConfig{
+		{ID: "hl-btc", Platform: "hyperliquid", Type: "perps", Args: []string{"sma", "BTC", "1h", "--mode=live"}, Capital: 500},
+		{ID: "hl-eth", Platform: "hyperliquid", Type: "perps", Args: []string{"rsi", "ETH", "1h", "--mode=live"}, Capital: 500},
+		{ID: "hl-manual", Platform: "hyperliquid", Type: "manual", Symbol: "SOL", Args: []string{"hold", "SOL", "1h", "--mode=live"}, Capital: 200},
+	}
+	state := &AppState{Strategies: map[string]*StrategyState{
+		"hl-btc":    {ID: "hl-btc", Cash: 350, Positions: map[string]*Position{}, SharedWalletValue: 500, SharedWalletValueSet: true},
+		"hl-eth":    {ID: "hl-eth", Cash: 500, Positions: map[string]*Position{}, SharedWalletValue: 300, SharedWalletValueSet: true},
+		"hl-manual": {ID: "hl-manual", Cash: 200, Positions: map[string]*Position{}, SharedWalletValue: 200, SharedWalletValueSet: true},
+	}}
+	walletBalances := map[SharedWalletKey]float64{{Platform: "hyperliquid", Account: "0xtest"}: 1000}
+	// detectSharedWallets is perps-only: hl-manual is NOT a member here.
+	accountShared := detectSharedWallets(allStrategies[:2])
+
+	got, _ := computeSubsetDisplayValue(allStrategies, state, nil, walletBalances, accountShared)
+	if got != 1000 {
+		t.Errorf("gated wallet incl. manual: want exactly 1000 (real balance, no double count), got %.2f", got)
 	}
 }

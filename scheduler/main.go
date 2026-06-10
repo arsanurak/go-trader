@@ -2195,8 +2195,9 @@ func main() {
 
 		// Build per-channel strategy lists for channel-level summaries.
 		// Adjusted TOTAL rows are computed per-channel/per-asset below via
-		// computeSubsetPortfolioValue using the hoisted walletBalances map so
-		// shared wallets are not double-counted in TOTAL rows (#915).
+		// computeSubsetDisplayValue using the hoisted walletBalances map so
+		// shared wallets are not double-counted in TOTAL rows (#915) and the
+		// TOTAL reconciles with exchange-derived per-strategy rows (#918).
 		mu.RLock()
 		channelStrats := make(map[string][]StrategyConfig)
 		for _, sc := range cfg.Strategies {
@@ -2258,8 +2259,10 @@ func main() {
 						detailKey = chKey + "|" + assetKeys[0]
 					}
 					chDetails := channelTradeDetails[detailKey]
-					// Compute shared-wallet-adjusted total for TOTAL row (#915).
-					chAdj, _ := computeSubsetPortfolioValue(chStrats, state, prices, walletBalances, sharedWallets)
+					// Compute shared-wallet-adjusted total for TOTAL row (#915);
+					// gated members sum exchange-derived values so the TOTAL
+					// reconciles with the per-strategy rows (#918).
+					chAdj, _ := computeSubsetDisplayValue(chStrats, state, prices, walletBalances, sharedWallets)
 					chSharpe := aggregateSharpe(closedByStrategy, chStrats, state, rfr)
 					msgs := FormatCategorySummary(cycle, elapsed, len(dueStrategies), chTrades, chAdj, prices, chDetails, chStrats, state, chKey, "", cfg.IntervalSeconds, chSharpe, lifetimeStats, cfg.Regime)
 					for _, msg := range msgs {
@@ -2270,8 +2273,11 @@ func main() {
 					for _, asset := range assetKeys {
 						assetStrats := assetGroups[asset]
 						assetDetails := channelTradeDetails[chKey+"|"+asset]
-						// Compute subset-adjusted total; straddle wallets virtual-sum (#915).
-						assetAdj, _ := computeSubsetPortfolioValue(assetStrats, state, prices, walletBalances, sharedWallets)
+						// Subset-adjusted total. Per-asset groups always straddle a
+						// multi-coin shared wallet; gated members sum their
+						// exchange-derived values so this one-row TOTAL matches
+						// the rows above it (#918), ungated keep #915 semantics.
+						assetAdj, _ := computeSubsetDisplayValue(assetStrats, state, prices, walletBalances, sharedWallets)
 						assetTrades := len(assetDetails)
 						assetSharpe := aggregateSharpe(closedByStrategy, assetStrats, state, rfr)
 						msgs := FormatCategorySummary(cycle, elapsed, len(dueStrategies), assetTrades, assetAdj, prices, assetDetails, assetStrats, state, chKey, asset, cfg.IntervalSeconds, assetSharpe, lifetimeStats, cfg.Regime)
@@ -2478,7 +2484,7 @@ func runSummaryAndExit(channelKey string, cfg *Config, state *AppState, sdb *Sta
 	lifetimeStats := loadLifetimeStatsBestEffort(sdb, "[summary]")
 	assetGroups, assetKeys := groupByAsset(chStrats)
 	if len(assetKeys) <= 1 {
-		chAdj, _ := computeSubsetPortfolioValue(chStrats, state, prices, summaryWalletBalances, summaryAccountShared)
+		chAdj, _ := computeSubsetDisplayValue(chStrats, state, prices, summaryWalletBalances, summaryAccountShared)
 		chSharpe := aggregateSharpe(closedByStrategy, chStrats, state, rfr)
 		msgs := FormatCategorySummary(state.CycleCount, 0, 0, 0, chAdj, prices, nil, chStrats, state, channelKey, "", cfg.IntervalSeconds, chSharpe, lifetimeStats, cfg.Regime)
 		for _, msg := range msgs {
@@ -2488,7 +2494,7 @@ func runSummaryAndExit(channelKey string, cfg *Config, state *AppState, sdb *Sta
 	} else {
 		for _, asset := range assetKeys {
 			assetStrats := assetGroups[asset]
-			assetAdj, _ := computeSubsetPortfolioValue(assetStrats, state, prices, summaryWalletBalances, summaryAccountShared)
+			assetAdj, _ := computeSubsetDisplayValue(assetStrats, state, prices, summaryWalletBalances, summaryAccountShared)
 			assetSharpe := aggregateSharpe(closedByStrategy, assetStrats, state, rfr)
 			msgs := FormatCategorySummary(state.CycleCount, 0, 0, 0, assetAdj, prices, nil, assetStrats, state, channelKey, asset, cfg.IntervalSeconds, assetSharpe, lifetimeStats, cfg.Regime)
 			for _, msg := range msgs {

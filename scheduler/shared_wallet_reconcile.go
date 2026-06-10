@@ -60,6 +60,12 @@ type sharedWalletReconcileResult struct {
 	// equal-weight fallback, so normally just orphan P&L). ~0 in normal
 	// operation; a materially non-zero value is an attribution/accounting bug.
 	Drift float64
+	// OrphanCoins lists (sorted) the on-chain coins whose unrealized P&L could
+	// not be attributed to any member. It identifies WHICH position is
+	// unowned in the operator alert and keys the drift tracker's streak so two
+	// unrelated one-cycle transients on consecutive cycles don't read as one
+	// persistent orphan.
+	OrphanCoins []string
 }
 
 // reconcileSharedWalletMemberValues splits one shared wallet's real account
@@ -148,6 +154,7 @@ func reconcileSharedWalletMemberValues(
 	}
 	ownedUPnL := make(map[string]float64, len(members))
 	attributedUPnL := 0.0
+	var orphanCoins []string
 	// Deterministic coin order for stable rounding behavior.
 	coins := make([]string, 0, len(uPnLByCoin))
 	for coin := range uPnLByCoin {
@@ -158,6 +165,7 @@ func reconcileSharedWalletMemberValues(
 		pnl := uPnLByCoin[coin]
 		owners := virtualQty[coin]
 		if len(owners) == 0 {
+			orphanCoins = append(orphanCoins, coin)
 			continue // orphan: no member holds this coin virtually
 		}
 		sumQty := 0.0
@@ -167,6 +175,7 @@ func reconcileSharedWalletMemberValues(
 			}
 		}
 		if sumQty <= 0 {
+			orphanCoins = append(orphanCoins, coin)
 			continue // owners present but all non-member / non-positive → orphan
 		}
 		for id, qty := range owners {
@@ -210,7 +219,7 @@ func reconcileSharedWalletMemberValues(
 		}
 	}
 
-	return sharedWalletReconcileResult{Values: values, Drift: drift}
+	return sharedWalletReconcileResult{Values: values, Drift: drift, OrphanCoins: orphanCoins}
 }
 
 // roundCents rounds a dollar amount to the nearest cent.
@@ -221,10 +230,11 @@ func roundCents(v float64) float64 {
 // sharedWalletDriftResult reports one wallet's reconciliation outcome for the
 // throttled drift alarm.
 type sharedWalletDriftResult struct {
-	Key       SharedWalletKey
-	Drift     float64 // accountBalance - Σ raw member values (orphan/unattributed P&L)
-	Balance   float64 // the real account balance reconciled against
-	MemberSum float64 // Σ rounded member display values stored this cycle
+	Key         SharedWalletKey
+	Drift       float64  // accountBalance - Σ raw member values (orphan/unattributed P&L)
+	Balance     float64  // the real account balance reconciled against
+	MemberSum   float64  // Σ rounded member display values stored this cycle
+	OrphanCoins []string // sorted unattributed coins — streak signature + alert detail
 }
 
 // reconcileSharedWalletDisplayValues recomputes the exchange-authoritative
@@ -382,10 +392,11 @@ func reconcileSharedWalletDisplayValues(
 			memberSum += res.Values[id]
 		}
 		results = append(results, sharedWalletDriftResult{
-			Key:       key,
-			Drift:     res.Drift,
-			Balance:   bal,
-			MemberSum: roundCents(memberSum),
+			Key:         key,
+			Drift:       res.Drift,
+			Balance:     bal,
+			MemberSum:   roundCents(memberSum),
+			OrphanCoins: res.OrphanCoins,
 		})
 	}
 	return results
@@ -401,6 +412,51 @@ func displayStrategyValue(s *StrategyState, prices map[string]float64) float64 {
 		return s.SharedWalletValue
 	}
 	return PortfolioValue(s, prices)
+}
+
+// computeSubsetDisplayValue returns the TOTAL value for a set of operator-facing
+// strategy rows so the TOTAL reconciles with the per-row displayStrategyValue.
+//
+// Strategies carrying an exchange-derived value this cycle (SharedWalletValueSet)
+// are summed directly: reconciled member values sum to the real account balance
+// by construction, so no wallet dedup is needed and even a partial slice of a
+// shared wallet (per-asset summaries, leaderboard top-N) matches its visible
+// rows exactly — computeSubsetPortfolioValue cannot do that for a straddling
+// wallet, where it virtual-sums the modeled PortfolioValue while the rows show
+// the exchange-derived split (#920 review). This also removes the display-side
+// double count for a gated same-account live manual strategy, whose slice is
+// already inside the wallet balance.
+//
+// Ungated strategies (non-shared platforms, or a wallet whose reconcile was
+// skipped this cycle on a fetch failure) fall back to
+// computeSubsetPortfolioValue with the original #915 dedup/virtual-sum
+// semantics — consistent with displayStrategyValue falling back to the modeled
+// PortfolioValue for the same rows. A wallet's members are always gated or
+// ungated together (reconcileSharedWalletDisplayValues sets the whole wallet
+// atomically), so the fallback never sees a partially-gated wallet.
+//
+// Display-only: risk math keeps computeTotalPortfolioValue / PortfolioValue.
+func computeSubsetDisplayValue(
+	subset []StrategyConfig,
+	state *AppState,
+	prices map[string]float64,
+	walletBalances map[SharedWalletKey]float64,
+	accountShared map[SharedWalletKey][]string,
+) (float64, bool) {
+	gated := 0.0
+	var rest []StrategyConfig
+	for _, sc := range subset {
+		if s, ok := state.Strategies[sc.ID]; ok && s != nil && s.SharedWalletValueSet {
+			gated += s.SharedWalletValue
+			continue
+		}
+		rest = append(rest, sc)
+	}
+	if len(rest) == 0 {
+		return gated, false
+	}
+	restVal, usedFallback := computeSubsetPortfolioValue(rest, state, prices, walletBalances, accountShared)
+	return gated + restVal, usedFallback
 }
 
 // sameAccountLiveManualMembers returns live HL `manual` strategy IDs that trade

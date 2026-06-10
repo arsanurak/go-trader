@@ -98,6 +98,10 @@ func TestReconcileSharedWallet_OrphanPosition_SurfacesAsDrift(t *testing.T) {
 	if got := sumValues(res.Values); math.Abs(got-(accountBalance-25)) > 0.02 {
 		t.Fatalf("sum %v != balance-orphan %v", got, accountBalance-25)
 	}
+	// The unattributed coin is identified for the alert + streak signature.
+	if len(res.OrphanCoins) != 1 || res.OrphanCoins[0] != "SOL" {
+		t.Fatalf("expected OrphanCoins [SOL], got %v", res.OrphanCoins)
+	}
 }
 
 // Cent rounding: values still sum to the rounded balance to the cent.

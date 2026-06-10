@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -35,7 +36,8 @@ type sharedWalletDriftEntry struct {
 	count          int
 	lastNotifiedAt time.Time
 	alerted        bool
-	lastDriftCents int64 // signature: re-alert when the drift magnitude shifts
+	lastDriftCents int64  // re-alert when the drift magnitude shifts
+	lastOrphanSig  string // streak identity: the sorted orphan-coin set
 }
 
 // SharedWalletDriftTracker throttles the cent-exact drift alarm per shared
@@ -55,7 +57,17 @@ type SharedWalletDriftTracker struct {
 // sharedWalletDriftAlertThreshold; the first alert fires on that crossing, then
 // re-throttles (a materially changed drift, every 10th cycle, or once an hour)
 // while the drift persists.
-func (t *SharedWalletDriftTracker) Record(walletKey string, drift float64, now time.Time) (bool, int) {
+//
+// orphanSig identifies WHICH orphan is drifting (the sorted unattributed coin
+// set). The confirmation streak is keyed on it: a different signature on the
+// next cycle means a DIFFERENT transient (e.g. a resting-limit fill on one coin
+// followed by an external manual open on another, each self-healing in one
+// cycle), so the streak restarts at 1 instead of two unrelated one-cycle
+// transients summing to a spurious alert + recovery pair (#920 review). A
+// genuine persistent orphan keeps the same coin set and still alerts on its
+// second cycle. The drift magnitude is deliberately NOT part of the streak key
+// — a real orphan's unrealized P&L moves with the mark every cycle.
+func (t *SharedWalletDriftTracker) Record(walletKey string, drift float64, orphanSig string, now time.Time) (bool, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.entries == nil {
@@ -66,12 +78,19 @@ func (t *SharedWalletDriftTracker) Record(walletKey string, drift float64, now t
 		e = &sharedWalletDriftEntry{}
 		t.entries[walletKey] = e
 	}
+	if e.count > 0 && e.lastOrphanSig != orphanSig {
+		// A different orphan than the one being confirmed → new streak.
+		// `alerted` is kept: if the wallet already alerted, recovery still
+		// requires a clean cycle, and the changed drift re-notifies below.
+		e.count = 0
+	}
 	driftCents := int64(math.Round(drift * 100))
 	// "Materially changed" = the drift moved by more than a cent since the last
 	// notification, so a slowly-worsening bug re-surfaces.
 	sigChanged := absInt64(driftCents-e.lastDriftCents) > 1
 	e.count++
 	e.lastDriftCents = driftCents
+	e.lastOrphanSig = orphanSig
 
 	// Confirmation window: a transient one-cycle orphan never reaches the
 	// threshold (it clears next cycle via Clear), so it never alerts.
@@ -133,10 +152,14 @@ func sharedWalletKeyLabel(key SharedWalletKey) string {
 	return fmt.Sprintf("%s/%s", key.Platform, key.Account)
 }
 
-func formatSharedWalletDriftAlert(key SharedWalletKey, balance, memberSum, drift float64, count int) string {
+func formatSharedWalletDriftAlert(key SharedWalletKey, balance, memberSum, drift float64, count int, orphanCoins []string) string {
+	orphanDetail := "no unattributed coins — check member weighting"
+	if len(orphanCoins) > 0 {
+		orphanDetail = "unattributed coins: " + strings.Join(orphanCoins, ", ")
+	}
 	return fmt.Sprintf(
-		"**SHARED-WALLET DRIFT** %s (pid=%d, %d consecutive): Σ member value $%.2f vs real balance $%.2f — diff $%+.2f exceeds $%.2f tolerance. Exchange-derived rows should reconcile exactly; this indicates an attribution/accounting bug (orphan position or weighting).",
-		sharedWalletKeyLabel(key), os.Getpid(), count, memberSum, balance, drift, sharedWalletDriftTolerance)
+		"**SHARED-WALLET DRIFT** %s (pid=%d, %d consecutive): Σ member value $%.2f vs real balance $%.2f — diff $%+.2f exceeds $%.2f tolerance (%s). Exchange-derived rows should reconcile exactly; this indicates an attribution/accounting bug (orphan position or weighting).",
+		sharedWalletKeyLabel(key), os.Getpid(), count, memberSum, balance, drift, sharedWalletDriftTolerance, orphanDetail)
 }
 
 func formatSharedWalletDriftRecovered(key SharedWalletKey, priorCount int) string {
@@ -157,13 +180,14 @@ func reportSharedWalletDrift(notifier *MultiNotifier, results []sharedWalletDrif
 	for _, r := range results {
 		label := sharedWalletKeyLabel(r.Key)
 		if math.Abs(r.Drift) > sharedWalletDriftTolerance {
-			shouldNotify, count := sharedWalletDriftTracker.Record(label, r.Drift, now)
-			fmt.Printf("[WARN] shared-wallet %s drift $%+.2f (Σ members $%.2f vs balance $%.2f)\n",
-				label, r.Drift, r.MemberSum, r.Balance)
+			orphanSig := strings.Join(r.OrphanCoins, ",")
+			shouldNotify, count := sharedWalletDriftTracker.Record(label, r.Drift, orphanSig, now)
+			fmt.Printf("[WARN] shared-wallet %s drift $%+.2f (Σ members $%.2f vs balance $%.2f, orphans=[%s])\n",
+				label, r.Drift, r.MemberSum, r.Balance, orphanSig)
 			if !shouldNotify || notifier == nil || !notifier.HasBackends() {
 				continue
 			}
-			msg := formatSharedWalletDriftAlert(r.Key, r.Balance, r.MemberSum, r.Drift, count)
+			msg := formatSharedWalletDriftAlert(r.Key, r.Balance, r.MemberSum, r.Drift, count, r.OrphanCoins)
 			notifier.SendToAllChannels(msg)
 			notifier.SendOwnerDM(msg)
 			continue

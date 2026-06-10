@@ -209,7 +209,7 @@ func leaderboardAdjustedTotal(
 	if len(subset) == 0 {
 		return -1
 	}
-	adj, _ := computeSubsetPortfolioValue(subset, state, prices, walletBalances, accountShared)
+	adj, _ := computeSubsetDisplayValue(subset, state, prices, walletBalances, accountShared)
 	return adj
 }
 
