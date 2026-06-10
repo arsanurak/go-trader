@@ -112,18 +112,23 @@ func TestDisplayStrategyValue_PrefersSetValue(t *testing.T) {
 
 // --- Drift alarm tracker ---
 
-func TestSharedWalletDriftTracker_FirstDetectionThenThrottleThenRecover(t *testing.T) {
+func TestSharedWalletDriftTracker_ConfirmThenThrottleThenRecover(t *testing.T) {
 	tr := &SharedWalletDriftTracker{}
 	now := time.Now().UTC()
-	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, now); !notify {
-		t.Fatal("first detection must alert")
+	// First detection is within the confirmation window → no alert yet.
+	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, now); notify {
+		t.Fatal("first detection must NOT alert (confirmation window)")
 	}
-	// Same drift again immediately → throttled (no signature change, not 10th, <1h).
-	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, now.Add(time.Minute)); notify {
-		t.Error("second identical detection should be throttled")
+	// Second consecutive detection crosses the threshold → alert.
+	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, now.Add(time.Minute)); !notify {
+		t.Fatal("second consecutive detection must alert")
+	}
+	// Same drift again → throttled (no signature change, not 10th, <1h).
+	if notify, _ := tr.Record("hyperliquid/0xabc", 5.00, now.Add(2*time.Minute)); notify {
+		t.Error("third identical detection should be throttled")
 	}
 	// Materially changed drift → re-alert.
-	if notify, _ := tr.Record("hyperliquid/0xabc", 9.00, now.Add(2*time.Minute)); !notify {
+	if notify, _ := tr.Record("hyperliquid/0xabc", 9.00, now.Add(3*time.Minute)); !notify {
 		t.Error("materially changed drift should re-alert")
 	}
 	// Recovery: within tolerance clears and reports recovered.
@@ -134,6 +139,21 @@ func TestSharedWalletDriftTracker_FirstDetectionThenThrottleThenRecover(t *testi
 	// Clearing a never-seen wallet is a no-op.
 	if r, _ := tr.Clear("okx/none"); r {
 		t.Error("clearing unknown wallet must not report recovery")
+	}
+}
+
+// A one-cycle orphan (e.g. a freshly-filled limit order not yet booked into the
+// virtual book) must produce NEITHER an alert NOR a recovery notice.
+func TestSharedWalletDriftTracker_OneCycleTransientSilent(t *testing.T) {
+	tr := &SharedWalletDriftTracker{}
+	now := time.Now().UTC()
+	if notify, _ := tr.Record("hyperliquid/0xabc", 25.00, now); notify {
+		t.Fatal("single transient detection must not alert")
+	}
+	// Next cycle the book catches up → within tolerance → Clear.
+	recovered, _ := tr.Clear("hyperliquid/0xabc")
+	if recovered {
+		t.Error("a never-alerted transient must not fire a recovery notice")
 	}
 }
 

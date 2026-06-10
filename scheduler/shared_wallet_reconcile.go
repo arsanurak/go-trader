@@ -130,6 +130,12 @@ func reconcileSharedWalletMemberValues(
 		uPnLByCoin[p.Coin] += p.UnrealizedPnL
 	}
 
+	// base is the shared collateral pool to split by capital weight. This
+	// subtraction assumes accountBalance is account EQUITY inclusive of
+	// unrealized P&L (HL marginSummary.accountValue and OKX ccxt total/`eq`
+	// both are — see get_account_balance). The member SUM reconciles to
+	// accountBalance regardless of this assumption, but the per-member split is
+	// only meaningful when it holds.
 	base := accountBalance - totalUPnL
 
 	// Attribute each coin's uPnL to its owning member(s), split by virtual-qty

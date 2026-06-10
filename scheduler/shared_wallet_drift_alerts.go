@@ -16,6 +16,20 @@ import (
 // float rounding only.
 const sharedWalletDriftTolerance = 0.01
 
+// sharedWalletDriftAlertThreshold is the number of CONSECUTIVE over-tolerance
+// cycles before the first operator alert fires. It is 2 (not 1) to absorb a
+// one-cycle booking lag: reconcileSharedWalletDisplayValues runs in the risk
+// phase using freshly-fetched on-chain positions but the PRIOR cycle's virtual
+// books — it executes before this cycle's reconcilePendingLimitOrders /
+// drainPendingManualActions / reconcileHyperliquidAccountPositions create the
+// matching virtual position. So a resting limit fill (#883) or an external
+// manual open is legitimately unowned (an orphan → drift) for exactly one
+// cycle, then the book catches up next cycle. Requiring two consecutive cycles
+// means that transient self-heals silently (no alert, no recovery notice) while
+// a genuine attribution bug — which persists across cycles — still alerts
+// within two cycles.
+const sharedWalletDriftAlertThreshold = 2
+
 // sharedWalletDriftEntry is one slot in the per-wallet drift tracker.
 type sharedWalletDriftEntry struct {
 	count          int
@@ -26,10 +40,10 @@ type sharedWalletDriftEntry struct {
 
 // SharedWalletDriftTracker throttles the cent-exact drift alarm per shared
 // wallet so a persistent attribution bug does not spam the operator every
-// cycle. Unlike the signal-script tracker (#829), it alerts on the FIRST
-// detection — exchange-derived values should never drift in normal operation,
-// so there is no transient-noise window to wait out. All state is in-memory and
-// resets on restart.
+// cycle. It alerts after a short consecutive-detection confirmation window
+// (sharedWalletDriftAlertThreshold) so a one-cycle booking lag for an
+// externally-originated fill self-heals without alarming; a real bug persists
+// and alerts within two cycles. All state is in-memory and resets on restart.
 type SharedWalletDriftTracker struct {
 	mu      sync.Mutex
 	entries map[string]*sharedWalletDriftEntry
@@ -37,9 +51,10 @@ type SharedWalletDriftTracker struct {
 
 // Record registers an over-tolerance drift for walletKey and reports whether
 // this cycle should fire an operator alert, along with the post-increment
-// consecutive-detection count. The first detection always alerts; subsequent
-// detections re-throttle (a materially changed drift, every 10th cycle, or once
-// an hour) while the drift persists.
+// consecutive-detection count. No alert fires until the streak reaches
+// sharedWalletDriftAlertThreshold; the first alert fires on that crossing, then
+// re-throttles (a materially changed drift, every 10th cycle, or once an hour)
+// while the drift persists.
 func (t *SharedWalletDriftTracker) Record(walletKey string, drift float64, now time.Time) (bool, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -58,10 +73,16 @@ func (t *SharedWalletDriftTracker) Record(walletKey string, drift float64, now t
 	e.count++
 	e.lastDriftCents = driftCents
 
+	// Confirmation window: a transient one-cycle orphan never reaches the
+	// threshold (it clears next cycle via Clear), so it never alerts.
+	if e.count < sharedWalletDriftAlertThreshold {
+		return false, e.count
+	}
+
 	shouldNotify := false
 	switch {
 	case !e.alerted:
-		shouldNotify = true // first detection
+		shouldNotify = true // confirmation window crossed
 	case sigChanged:
 		shouldNotify = true
 	case e.count%10 == 0:
