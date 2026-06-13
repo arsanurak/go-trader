@@ -455,6 +455,27 @@ def test_config_flag_rejects_non_single_modes(tmp_path):
             _sys.argv = old_argv
 
 
+def test_direction_flag_rejected_alongside_config(tmp_path, monkeypatch):
+    """#989 review: the live config's `direction` field owns the entry
+    transform; a CLI --direction silently losing to it would score the wrong
+    leg — the exact divergence class the flag exists to prevent. Reject
+    loudly, like --close-strategy alongside --config."""
+    config_path = _write_config(tmp_path, version=15, strategies=[
+        {"id": "x", "open_strategy": {"name": "triple_ema"}, "close_strategies": []},
+    ])
+    called = {}
+    monkeypatch.setattr(run_backtest, "run_single_backtest",
+                        lambda *a, **kw: called.setdefault("hit", True))
+    monkeypatch.setattr("sys.argv", [
+        "run_backtest.py", "--mode", "single",
+        "--config", config_path, "--strategy", "x",
+        "--direction", "short",
+    ])
+    with pytest.raises(SystemExit):
+        run_backtest.main()
+    assert "hit" not in called
+
+
 # ─── #942: direction / invert_signal / regime_window_divergence parity ───────
 
 
@@ -527,22 +548,38 @@ def test_load_strategy_config_rejects_regime_window_divergence(tmp_path):
         run_backtest.load_strategy_config(path, "hl-d-btc")
 
 
-@pytest.mark.parametrize("direction", ["short", "both"])
-def test_load_strategy_config_rejects_short_or_both_without_close(tmp_path, direction):
-    # The plain long/flat signal path cannot open shorts, so a short/both
-    # direction with no close evaluator would silently drop the short side.
-    # Reject instead of backtesting long-only.
+def test_load_strategy_config_rejects_both_without_close(tmp_path):
+    # The plain signal path runs one leg at a time, so direction="both" with
+    # no close evaluator would silently drop the short side. Reject instead
+    # of backtesting long-only.
     path = _write_config(tmp_path, version=15, strategies=[
         {
             "id": "hl-noclose",
             "type": "perps",
             "open_strategy": {"name": "tema_cross_bd"},
-            "direction": direction,
-            # No close_strategy → plain long/flat path.
+            "direction": "both",
+            # No close_strategy → plain signal path.
         },
     ])
-    with pytest.raises(ValueError, match="cannot open shorts"):
+    with pytest.raises(ValueError, match="silently dropped"):
         run_backtest.load_strategy_config(path, "hl-noclose")
+
+
+def test_load_strategy_config_short_without_close_is_allowed(tmp_path):
+    # #989: direction="short" + no close evaluator engages the Backtester's
+    # short/flat plain path (signal=-1 opens the short, +1 closes it), the
+    # exact mirror of the long/flat default — no longer rejected.
+    path = _write_config(tmp_path, version=15, strategies=[
+        {
+            "id": "hl-shortnoclose",
+            "type": "perps",
+            "open_strategy": {"name": "tema_cross_bd"},
+            "direction": "short",
+        },
+    ])
+    kwargs = run_backtest.load_strategy_config(path, "hl-shortnoclose")
+    assert kwargs["direction"] == "short"
+    assert kwargs["close_strategies"] == []
 
 
 def test_load_strategy_config_long_without_close_is_allowed(tmp_path):

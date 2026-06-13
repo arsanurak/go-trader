@@ -928,13 +928,15 @@ class Backtester:
             ``signal<0`` opens short, and closes come from the close evaluator.
             Masking the disallowed open side is exact and never suppresses a
             close.
-          - plain long/flat path: ``signal=1`` opens long, ``signal=-1`` only
-            *closes* the long (a short is never opened). It is structurally
-            long-only, so ``direction="long"`` already matches live and needs
-            no mask; ``"short"``/``"both"`` are unmodelable here and are
-            rejected at config load (``run_backtest.load_strategy_config``).
-            Masking ``-1`` in this path would wrongly suppress long-closes, so
-            it is intentionally skipped.
+          - plain signal path: structurally single-leg. Long/flat (default):
+            ``signal=1`` opens long, ``signal=-1`` only *closes* the long, so
+            ``direction="long"`` already matches live and needs no mask.
+            ``direction="short"`` (#989) flips the path's interpretation in
+            ``run()`` instead (``-1`` opens a short, ``+1`` closes it) — the
+            mask is skipped for the same reason (it would suppress closes).
+            ``"both"`` stays unmodelable here (one signal cannot open one
+            side and close the other) and is rejected at config/candidate
+            load (``run_backtest.load_strategy_config``).
         """
         sig = sig_int
         if self.invert_signal:
@@ -1030,6 +1032,30 @@ class Backtester:
             or bool(_close_fraction_columns(df))
             or bool(self.close_strategies)
         )
+        # #989: short/flat plain path — the exact mirror of the structural
+        # long/flat path, engaged by direction="short" with no close evaluator
+        # (live open-as-close semantics on a short-only strategy): signal=-1
+        # OPENS a short, signal=+1 CLOSES it. The open/close engine path is
+        # unaffected (direction masking there already models short opens).
+        # direction="both" remains unmodelable on the plain path (one signal
+        # cannot both open one side and close the other) — rejected at
+        # config/candidate load AND here, so API callers that bypass the
+        # loaders cannot silently score a long/flat run as "both".
+        if self.direction == "both" and not uses_open_close:
+            raise ValueError(
+                "direction='both' requires a close evaluator (open/close "
+                "engine path) — the plain single-leg path cannot open one "
+                "side and close the other, so the run would silently score "
+                "long/flat. Backtest each leg separately with "
+                "direction='long' / direction='short'."
+            )
+        plain_short = (not uses_open_close) and self.direction == "short"
+        if plain_short and starting_long:
+            raise ValueError(
+                "starting_long cannot seed a direction='short' plain-path "
+                "run — the short/flat path never emits a long close, so the "
+                "seeded long would be carried untouched to end-of-data."
+            )
         has_profile_alloc = self._profile_alloc is not None
         if has_profile_alloc:
             if "_profile_label" not in df.columns:
@@ -1498,7 +1524,14 @@ class Backtester:
                         ):
                             sl_after_just_applied = True
 
-                if open_action == "long" and position == 0 and not regime_blocked:
+                # Entry guard (PR #1004 review): a blown short can leave
+                # flat-state cash <= 0 (buy-back cost exceeded the 2x notional
+                # held). Opening from non-positive cash computes negative
+                # shares, silently flipping the position sign against the
+                # booked trade side and inverting all subsequent PnL. The
+                # account is economically bust — skip the entry. cash == 0 is
+                # included: it would book a zero-share phantom trade.
+                if open_action == "long" and position == 0 and cash > 0 and not regime_blocked:
                     effective_price = fill_price * (1 + self.slippage_pct)
                     commission = cash * self.commission_pct
                     available = cash - commission
@@ -1549,7 +1582,7 @@ class Backtester:
                         sl_tiers_processed = 0
                         post_tp_trail_mult = None
                         sl_high_water_px = mark_price
-                elif open_action == "short" and position == 0 and not regime_blocked:
+                elif open_action == "short" and position == 0 and cash > 0 and not regime_blocked:
                     effective_price = fill_price * (1 - self.slippage_pct)
                     commission = cash * self.commission_pct
                     notional = cash - commission
@@ -1708,12 +1741,97 @@ class Backtester:
                 sl_high_water_px = 0.0
                 continue
 
-            # NOTE: this signal path is long/flat only — signal == 1 opens a
-            # long, signal == -1 only *closes* it; a short is never opened. So
-            # OOS validation of bidirectional strategies (momentum_pro,
-            # mean_reversion_pro, consolidation_range) exercises the LONG side
-            # only; their live short signals are not covered by backtest.
-            if signal == 1 and position == 0 and not regime_blocked:
+            # Short/flat mirror of the standalone-stop fill above: buy back
+            # the short at this bar's open (#989).
+            if pending_signal_sl_close and position < 0:
+                effective_price = fill_price * (1 + self.slippage_pct)
+                cost = abs(position) * effective_price
+                commission = cost * self.commission_pct
+                cash -= cost + commission
+                position = 0.0
+                if current_trade:
+                    current_trade.close(idx, effective_price)
+                    _stamp_hold(current_trade, hold, entry_atr=entry_atr_value,
+                                exit_fee=commission, reason="signal_sl")
+                    trades.append(current_trade)
+                    current_trade = None
+                pending_signal_sl_close = False
+                sl_trigger_px = 0.0
+                avg_cost = 0.0
+                entry_atr_value = 0.0
+                sl_high_water_px = 0.0
+                continue
+
+            # NOTE: this signal path runs one leg at a time. Default
+            # (long/flat): signal == 1 opens a long, signal == -1 only
+            # *closes* it; a short is never opened. With direction="short"
+            # (#989) the interpretation mirrors: signal == -1 opens a short,
+            # signal == 1 only *closes* it. Bidirectional strategies are
+            # therefore measured one leg per run — long leg by default,
+            # short leg via direction="short" — never both in one run.
+            # ``cash > 0`` on every open: a blown short leaves flat-state cash
+            # <= 0, and opening from it computes negative shares — a phantom
+            # position whose sign contradicts the booked side (PR #1004
+            # review). Bust account: entries skip until end of data. The
+            # long/flat path can't reach negative cash today, but carries the
+            # same guard so the invariant holds by construction.
+            if plain_short and signal == -1 and position == 0 and cash > 0 and not regime_blocked:
+                # SELL — open short with full notional. Mirrors the engine
+                # path's short-open mechanics: pay commission, receive the
+                # short-sale proceeds (cash = 2 * notional).
+                effective_price = fill_price * (1 - self.slippage_pct)
+                commission = cash * self.commission_pct
+                notional = cash - commission
+                shares = notional / effective_price
+                cash = 2 * notional
+                position = -shares
+
+                current_trade = Trade(idx, effective_price, "short")
+                current_trade.shares = shares
+
+                # Standalone stop seeding — mirror of the long block below
+                # (fixed ATR mult > trailing ATR mult > fixed pct), triggers
+                # placed ABOVE the entry for a short.
+                avg_cost = effective_price
+                entry_atr_value = self._stamp_entry_atr(atr_series, idx, effective_price)
+                hold.open(effective_price, "short", commission)
+                sl_trigger_px = 0.0
+                sl_high_water_px = mark_price
+                if (
+                    self.stop_loss_atr_mult is not None
+                    and self.stop_loss_atr_mult > 0
+                    and entry_atr_value > 0
+                ):
+                    sl_trigger_px = avg_cost + self.stop_loss_atr_mult * entry_atr_value
+                elif (
+                    self.trailing_stop_atr_mult is not None
+                    and self.trailing_stop_atr_mult > 0
+                    and entry_atr_value > 0
+                ):
+                    sl_trigger_px = mark_price + self.trailing_stop_atr_mult * entry_atr_value
+                elif self.stop_loss_pct is not None and self.stop_loss_pct > 0:
+                    sl_trigger_px = avg_cost * (1 + self.stop_loss_pct)
+
+            elif plain_short and signal == 1 and position < 0:
+                # BUY — close short (buy back)
+                effective_price = fill_price * (1 + self.slippage_pct)
+                cost = abs(position) * effective_price
+                commission = cost * self.commission_pct
+                cash -= cost + commission
+                position = 0.0
+
+                if current_trade:
+                    current_trade.close(idx, effective_price)
+                    _stamp_hold(current_trade, hold, entry_atr=entry_atr_value,
+                                exit_fee=commission, reason="signal")
+                    trades.append(current_trade)
+                    current_trade = None
+                sl_trigger_px = 0.0
+                avg_cost = 0.0
+                entry_atr_value = 0.0
+                sl_high_water_px = 0.0
+
+            elif not plain_short and signal == 1 and position == 0 and cash > 0 and not regime_blocked:
                 # BUY — go long with all available cash
                 effective_price = fill_price * (1 + self.slippage_pct)
                 commission = cash * self.commission_pct
@@ -1792,6 +1910,23 @@ class Backtester:
                     if candidate > sl_trigger_px:
                         sl_trigger_px = candidate
                 if self._sl_hit("long", mark_price, sl_trigger_px):
+                    pending_signal_sl_close = True
+            elif position < 0 and sl_trigger_px > 0:
+                # Short mirror (#989): the trail anchors on a LOW-water mark
+                # (sl_high_water_px doubles as the favourable-extreme anchor,
+                # matching _walk_trail's convention) and only ever tightens
+                # the trigger DOWN; a close at/above the trigger fires.
+                if (
+                    self.trailing_stop_atr_mult is not None
+                    and self.trailing_stop_atr_mult > 0
+                    and entry_atr_value > 0
+                ):
+                    if mark_price < sl_high_water_px:
+                        sl_high_water_px = mark_price
+                    candidate = sl_high_water_px + self.trailing_stop_atr_mult * entry_atr_value
+                    if candidate < sl_trigger_px:
+                        sl_trigger_px = candidate
+                if self._sl_hit("short", mark_price, sl_trigger_px):
                     pending_signal_sl_close = True
 
         # Close any open position at the end
