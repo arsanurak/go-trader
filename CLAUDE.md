@@ -10,6 +10,7 @@
 
 ## Decision Priorities
 - **Always pursue the absolute best technical solution — full stop.** Cost, compute, resources, time-to-implement, effort, manpower, tests, and code volume are NOT design constraints and must never narrow the option space: choose the best solution as if these were unlimited, then update/rewrite tests after the feature is done. These govern *quality*, not *scope*; don't override the branch+PR workflow, "verify issue claims against code", or destructive-action safety rules.
+- **Never give time, duration, or effort estimates** ("2–4 days", "low effort", headcount/manpower) in responses, PRs, issues, or commits. Describe complexity only in terms of scope and risk.
 
 ## Repo Structure
 `scheduler/` is one Go `package main`. **Guardrails only below — full file-ownership map, symbol/config inventories, and per-feature mechanics live in `docs/ARCHITECTURE.md` (not auto-loaded; read the relevant section there before editing a subsystem).**
