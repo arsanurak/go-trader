@@ -251,6 +251,7 @@ Values: `every` / `per_check` / `always` (every cycle), `hourly`, `daily`, Go du
 | `script`, `args` | Python entry-point + argv (auto-filled for `manual`) | required |
 | `capital` | Starting capital in USD | 1000 |
 | `max_drawdown_pct` | Per-strategy CB; peak-relative (spot/options/futures), margin-relative (perps) | spot 5, options 10, perps 5 |
+| `circuit_breaker` | Set `false` to disable both circuit-breaker arms (drawdown + 5 consecutive losses) for this strategy; an already-latched CB still drains and `cb=off` shows in `inspect`. Omit to keep the breaker enabled (safe default). | enabled |
 | `interval_seconds` | Check interval (0 → global) | 0 |
 | `htf_filter` | Higher-timeframe trend filter | false |
 | `open_strategy` | Co-located ref `{name, params}` overriding the entry; falls back to `args[0]` | null |
@@ -300,10 +301,14 @@ For hand-placed positions (or TradingView alerts) tracked by the scheduler for P
 ./go-trader manual-open  hl-manual-btc --limit-price 68000 --side long --margin 50  # post-only limit open
 ./go-trader manual-open  hl-manual-btc --limit-price 68000 --tif Gtc --expire-after 4h
 ./go-trader manual-cancel <limit-order-id>                                      # cancel a resting limit
+./go-trader manual-update-sl hl-manual-btc --trigger 66000                      # ratchet the resting SL
+./go-trader manual-cancel-sl hl-manual-btc                                      # remove the resting SL
 ./go-trader manual-close hl-manual-btc [--qty 0.025]
 ```
 
 Sizing flags are mutually exclusive (`--size` / `--notional` / `--margin`); when all three are omitted (and not `--record-only`), `--margin 50` is auto-applied. `--side` defaults to `long`. Omitting `--atr` auto-fetches ATR(14) from Hyperliquid OHLCV for the strategy's symbol+timeframe; a leverage-aware fallback (`0.1 * fill_price / leverage`) is used only if the fetch fails. SL + N-tier TPs are placed inline so the position is never naked; on queue-insert failure the scheduler auto-flattens and cancels the protective orders. `type=manual` strategies with no stop fields default to `stop_loss_atr_mult = 1.5×`. All four defaults (margin, SL multiplier, side, TP tiers) are overridable via an optional top-level `manual_defaults` config block (hot-reloadable via SIGHUP).
+
+`manual-update-sl` / `manual-cancel-sl` edit a tracked position's stop-loss in place (cancel-then-place, or cancel) without a restart — they queue the change for the daemon to apply, so no direct database edit. Both are rejected when the strategy's automated protection (an ATR/regime `stop_loss_atr_mult` or a trailing stop) would re-pin the edit next cycle; only strategies opted out of auto-SL (`stop_loss_atr_mult: 0`, no trailing) qualify. `--dry-run` previews without touching the exchange.
 
 Resting limit opens (`--limit-price`) are ALO (post-only) by default or GTC with `--tif Gtc`; the CLI exits immediately and the scheduler polls fill status each cycle, booking fills incrementally. `manual-cancel <id>` queues a cancel that the scheduler finalizes next cycle.
 
@@ -372,6 +377,8 @@ open http://localhost:8099/dashboard     # dashboard: charts, trade history, equ
 journalctl -u go-trader -n 50           # recent logs
 ./go-trader inspect <strategy-id>        # effective post-migration config (resolved SL/TP + provenance)
 ./go-trader inspect --all --json         # all strategies, machine-readable
+./go-trader agent-info                   # self-describing JSON: capabilities, config schema, env vars, live state
+./go-trader agent-info --bootstrap-md    # write AGENTS.generated.md (read-only; never touches state)
 ```
 
 The dashboard is served by the same loopback-only status server as `/status` and `/health` (Go binds `localhost:<port>` — use `http://127.0.0.1:<port>/dashboard` or `http://localhost:<port>/dashboard`). It includes candle charts with trade markers, a scrollable trade history panel, per-strategy equity sparklines, a sortable all-strategies table, a regime badge, dark mode, a strategy tuner for editing and previewing parameter changes directly in the browser, and a **Reports** section (`/reports`) with a strategy-audit ranking page. If `status_token` is configured, the page prompts for that token and stores it in browser local storage for API calls; the tuner's Apply button requires `status_token` to be set. Prefer leaving each instance on loopback and reaching it through your VPN or reverse proxy; do not widen the bind to `0.0.0.0` just for remote viewing.
@@ -409,7 +416,7 @@ Open-position lines append `SL: $<trigger_px> (<signed_pct>%)` when a Hyperliqui
 ## Risk Management
 
 - **Portfolio kill switch** — halts trading at `portfolio_risk.max_drawdown_pct` (default 25); submits real close orders on HL / OKX perps / Robinhood crypto / TopStep, clearing virtual state only after every platform confirms flat.
-- **Per-strategy circuit breakers** — pause on max-drawdown breach (24h cooldown); peak-relative for spot/options/futures, margin-relative for perps. HL/OKX perps, Robinhood crypto, and TopStep CBs auto-close reduce-only; OKX spot and Robinhood options surface an `operator-required` warning every cycle until flattened by hand.
+- **Per-strategy circuit breakers** — pause on max-drawdown breach or 5 consecutive losses (24h cooldown); peak-relative for spot/options/futures, margin-relative for perps. HL/OKX perps, Robinhood crypto, and TopStep CBs auto-close reduce-only; OKX spot and Robinhood options surface an `operator-required` warning every cycle until flattened by hand. A latched breaker still lets an open HL perps position's trailing stop keep ratcheting (it manages, but opens nothing). Set `circuit_breaker: false` on a strategy to disable the breaker entirely (a disabled-but-breached strategy logs a one-shot warning so the missing protection is visible).
 - **Hyperliquid stop-loss** — exchange-side reduce-only trigger via one of `stop_loss_pct` / `stop_loss_margin_pct` / `stop_loss_atr_mult` / `trailing_stop_pct` / `trailing_stop_atr_mult` (mutually exclusive when positive). All five omitted → fixed ATR stop at `default_stop_loss_atr_mult * entry_atr` (default `1.0`); explicit `0` opts out. Trailing stops debounce via `trailing_stop_min_move_pct` to stay under HL's 1000-OID cap.
 - **On-chain N-tier TP/SL ladders** — `tiered_tp_atr` / `tiered_tp_atr_live` close evaluators place reduce-only TPs at configured ATR multiples (default `[{1.5×, 0.4}, {3×, 0.8}, {5×, 1.0}]`); final tier absorbs rounding dust. Full close cancels all SL+TP OIDs in one shot.
 - **Trailing-ratchet close** — `trailing_tp_ratchet` / `trailing_tp_ratchet_regime` close evaluators turn each cleared profit tier into a tighter trailing stop (monotonic — the trail only ratchets in) and optionally scale out a slice of the position at each rung. Unlike the tiered TP ladder, no fixed take-profit is placed on-chain: the position rides a single trailing stop that keeps tightening as price runs. Scalar form requires `trailing_stop_atr_mult` as the initial trail; regime form (`trailing_tp_ratchet_regime`) requires `trailing_stop_atr_regime` instead. Available on HL perps and `type=manual`.
