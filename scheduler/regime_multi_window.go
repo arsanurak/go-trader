@@ -554,6 +554,12 @@ func stampPositionRegimeFromPayload(s *StrategyState, symbol string, payload Reg
 	if pos.Regime != "" {
 		return
 	}
+	// #1085: the directional-certification verdict is NOT stamped here. It is
+	// frozen at the entry instant by stampDirectionCertifiedAtOpenIfOpened (gated
+	// on a genuine open Trade), independent of when this regime LABEL records —
+	// the label warms up lazily in multi-window mode, and tying the verdict to it
+	// let a between-open-and-label SIGHUP cert change corrupt an open position's
+	// stamp. The label and the verdict have different "known-at" instants.
 	gateKey := resolveStrategyRegimeWindow(sc, "gate", rc)
 	if label := payload.Label(gateKey, rc); label != "" {
 		pos.Regime = label

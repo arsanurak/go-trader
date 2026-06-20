@@ -106,6 +106,17 @@ func main() {
 	}
 	fmt.Printf("Loaded config: %d strategies, interval=%ds\n", len(cfg.Strategies), cfg.IntervalSeconds)
 
+	// #1085: load the directional-certification artifact (SSoT for the
+	// regime->direction edge gate). Fail-closed — a missing/malformed artifact
+	// runs every regime_directional_policy strategy DEFAULT-OFF (base
+	// direction), never a wrong-side bet, and never crashes the daemon.
+	setDirectionalCertStore(LoadDirectionalCertSetFailClosed(directionalCertPath(), func(f string, a ...interface{}) {
+		fmt.Fprintf(os.Stderr, f+"\n", a...)
+	}))
+	for _, line := range directionalCertStartupSummary(cfg) {
+		fmt.Println(line)
+	}
+
 	// #704: emit a one-line resolved summary per strategy so operators can
 	// audit close/SL/TP wiring without grepping the JSON. Best-effort — a
 	// failed re-read just means we can't mark explicit-vs-default but the
@@ -528,6 +539,18 @@ func main() {
 		tickSeconds = schedulerTickSeconds(cfg)
 		drawdownWarnThresholdPct = configuredDrawdownWarnThresholdPct(cfg)
 		mu.Unlock()
+
+		// #1085: refresh the directional-certification artifact on SIGHUP so a
+		// re-run of regime_1076_certify.py takes effect without a restart.
+		// Fail-closed on error (keeps default-off). Certification status changes
+		// never disturb an OPEN position — the entry gate keys on the live
+		// verdict only when flat; open positions ride under their open stamp.
+		setDirectionalCertStore(LoadDirectionalCertSetFailClosed(directionalCertPath(), func(f string, a ...interface{}) {
+			fmt.Fprintf(os.Stderr, "[reload] "+f+"\n", a...)
+		}))
+		for _, line := range directionalCertStartupSummary(cfg) {
+			fmt.Printf("[reload] %s\n", line)
+		}
 
 		if len(changes) == 0 {
 			fmt.Println("[reload] Config reload applied: no hot-reloadable changes")
@@ -2678,6 +2701,7 @@ func executeSpotResult(sc StrategyConfig, s *StrategyState, db *StateDB, result 
 	trades := exec.TradesExecuted
 	stampEntryATRIfOpened(s, result.Symbol, result.Indicators)
 	stampPositionRegimeIfOpened(s, result.Symbol, regimePayloadValue(result.Regime), sc, regime)
+	stampDirectionCertifiedAtOpenIfOpened(s, result.Symbol, exec.OpenTrade != nil, sc, regime)
 	if pos, ok := s.Positions[result.Symbol]; ok {
 		recordPositionOpen(s, sc, exec.OpenTrade, pos)
 	}
@@ -2986,7 +3010,21 @@ func runHyperliquidCheck(sc *StrategyConfig, prices map[string]float64, posCtx P
 	// to its natural exit under the policy that opened it.
 	currentDirRegime := regimeDirectionalLabel(*sc, regimePayloadValue(result.Regime), regime)
 	posDirRegime := posCtx.DirectionalRegime
-	if entry, applied, legacyFallback := applyRegimeDirectionalPolicy(sc, currentDirRegime, posDirRegime, posCtx.Quantity); applied {
+	// #1085: evidence gate (PER STATE). When FLAT, key the entry side on the LIVE
+	// certified per-state direction map for this strategy's (asset,timeframe,classifier).
+	// When a position is OPEN, ride under the map frozen at open so an artifact
+	// expiry/refresh never re-gates it mid-position; a state whose configured side
+	// contradicts the certified sign (or is uncertified) resolves to base, so a
+	// certified cell can never bet opposite the evidence. Then per-position:
+	var dirCertStates map[string]string
+	if sc.RegimeDirectionalPolicy.IsConfigured() {
+		if posCtx.Quantity > 0 {
+			dirCertStates = posCtx.DirectionCertifiedStatesAtOpen
+		} else {
+			dirCertStates, _ = strategyDirectionalCertified(*sc, regime, time.Now().UTC())
+		}
+	}
+	if entry, applied, legacyFallback := applyRegimeDirectionalPolicy(sc, currentDirRegime, posDirRegime, posCtx.Quantity, dirCertStates); applied {
 		regimeKey := effectiveRegimeForPolicy(currentDirRegime, posDirRegime, posCtx.Quantity)
 		logger.Info("Regime directional policy: regime=%s -> direction=%q invert_signal=%t",
 			regimeKey, entry.Direction, entry.InvertSignal)
@@ -3331,6 +3369,7 @@ func executeHyperliquidResultDeferredOpen(sc StrategyConfig, s *StrategyState, r
 	openTrade := exec.OpenTrade
 	stampEntryATRIfOpened(s, result.Symbol, result.Indicators)
 	stampPositionRegimeIfOpened(s, result.Symbol, regimePayloadValue(result.Regime), sc, regime)
+	stampDirectionCertifiedAtOpenIfOpened(s, result.Symbol, openTrade != nil, sc, regime)
 	if pos, ok := s.Positions[result.Symbol]; ok {
 		stampPositionProtectionSnapshot(pos, sc)
 	}
@@ -3599,6 +3638,7 @@ func executeTopStepResult(sc StrategyConfig, s *StrategyState, db *StateDB, resu
 	trades := exec.TradesExecuted
 	stampEntryATRIfOpened(s, result.Symbol, result.Indicators)
 	stampPositionRegimeIfOpened(s, result.Symbol, regimePayloadValue(result.Regime), sc, regime)
+	stampDirectionCertifiedAtOpenIfOpened(s, result.Symbol, exec.OpenTrade != nil, sc, regime)
 	if pos, ok := s.Positions[result.Symbol]; ok {
 		recordPositionOpen(s, sc, exec.OpenTrade, pos)
 	}
@@ -3769,6 +3809,7 @@ func executeRobinhoodResult(sc StrategyConfig, s *StrategyState, db *StateDB, re
 	trades := exec.TradesExecuted
 	stampEntryATRIfOpened(s, result.Symbol, result.Indicators)
 	stampPositionRegimeIfOpened(s, result.Symbol, regimePayloadValue(result.Regime), sc, regime)
+	stampDirectionCertifiedAtOpenIfOpened(s, result.Symbol, exec.OpenTrade != nil, sc, regime)
 	if pos, ok := s.Positions[result.Symbol]; ok {
 		recordPositionOpen(s, sc, exec.OpenTrade, pos)
 	}
@@ -3987,6 +4028,7 @@ func executeOKXResult(sc StrategyConfig, s *StrategyState, db *StateDB, result *
 	trades := exec.TradesExecuted
 	stampEntryATRIfOpened(s, result.Symbol, result.Indicators)
 	stampPositionRegimeIfOpened(s, result.Symbol, regimePayloadValue(result.Regime), sc, regime)
+	stampDirectionCertifiedAtOpenIfOpened(s, result.Symbol, exec.OpenTrade != nil, sc, regime)
 	if pos, ok := s.Positions[result.Symbol]; ok {
 		recordPositionOpen(s, sc, exec.OpenTrade, pos)
 	}
