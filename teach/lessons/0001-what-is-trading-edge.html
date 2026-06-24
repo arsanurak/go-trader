@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บทเรียนที่ 01 — Trading Edge คืออะไร?</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div class="lesson-wrap">
+
+  <!-- ─── Header ─────────────────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">
+      <span class="course-label">การเทรดเชิงปริมาณ</span>
+      <span class="lesson-label">บทเรียนที่ 01</span>
+    </div>
+    <h1 class="lesson-title">Trading Edge คืออะไร?</h1>
+    <p class="lesson-thesis">
+      ทุกกลยุทธ์ใน codebase นี้ถูกสร้างมาเพื่อตอบคำถามเดียว:
+      รูปแบบนี้มี <em>ค่าคาดหวังเป็นบวก</em> ในการเทรดหลายครั้งหรือไม่?
+      Edge คือคำตอบ ทั้ง pipeline — signal, backtest, regime filter,
+      live monitoring — มีอยู่เพื่อค้นหา วัดผล และรักษา edge ไว้
+    </p>
+  </header>
+
+  <!-- ─── Hero: equity curve animation ───────────────────────────────────── -->
+  <figure class="hero-figure">
+    <canvas id="edgeCurves" height="220"
+      aria-label="เส้น equity curve จำลอง 2 เส้น กลยุทธ์ A ไม่มี edge ดริฟท์แบบสุ่ม กลยุทธ์ B มี edge เป็นบวกเล็กน้อยและมีแนวโน้มขึ้นในการเทรด 200 ครั้ง">
+    </canvas>
+    <figcaption>
+      <span class="fig-a">■ กลยุทธ์ A</span> — win rate 50%, ชนะเฉลี่ย $1, แพ้เฉลี่ย $1. ไม่มี edge.&ensp;
+      <span class="fig-b">■ กลยุทธ์ B</span> — win rate 53%, ชนะเฉลี่ย $1.10, แพ้เฉลี่ย $0.90. มี edge เป็นบวกเล็กน้อย.
+      ทั้งคู่รัน 200 ครั้งจำลองด้วย volatility เดียวกัน
+    </figcaption>
+  </figure>
+
+  <!-- ─── Objectives ──────────────────────────────────────────────────────── -->
+  <section class="objectives">
+    <h2>หลังจากจบบทเรียนนี้ คุณจะสามารถ</h2>
+    <ol>
+      <li>คำนวณค่าคาดหวังต่อการเทรดจาก win rate และขนาด payoff</li>
+      <li>อธิบายว่าทำไม edge จึงมองไม่เห็นในการเทรดครั้งเดียว แต่ตรวจจับได้ทางสถิติในหลายร้อยครั้ง</li>
+      <li>อธิบายว่าแต่ละขั้นตอนของ go-trader pipeline เชื่อมต่อกับการค้นหาหรือรักษา edge อย่างไร</li>
+    </ol>
+  </section>
+
+  <!-- ─── Section 1: The Math ─────────────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>คณิตศาสตร์ของ Edge</h2>
+
+    <p>
+      การเทรดมีผลลัพธ์ได้สองแบบ: ชนะ หรือ แพ้ Edge คือค่าเฉลี่ยถ่วงน้ำหนักของผลลัพธ์เหล่านั้น —
+      จำนวนเงินที่คุณคาดว่าจะได้ในการเทรดครั้งเดียว ถ้าหากรันกลยุทธ์นั้นไปเรื่อยๆ ไม่จำกัด
+    </p>
+
+    <div class="formula">
+      E[trade] = (win rate × กำไรเฉลี่ย) − (loss rate × ขาดทุนเฉลี่ย)
+    </div>
+
+    <p>
+      ถ้า E[trade] เป็นบวก กลยุทธ์นั้นทำเงินได้ในการเทรดหลายครั้ง
+      ถ้าเป็นศูนย์ คุณกำลังพนันด้วยค่าคาดหวังเป็นกลาง
+      ถ้าเป็นลบ คุณจะขาดทุนอย่างแน่นอนทางคณิตศาสตร์ — ไม่มีการจัดการ position sizing
+      หรือ risk management ใดที่จะแก้ไขค่าคาดหวังติดลบได้
+    </p>
+
+    <p>
+      สูตรนี้มีนัยสำคัญที่ทำให้คนส่วนใหญ่แปลกใจ:
+      <strong>win rate อย่างเดียวไม่บอกอะไรคุณเลย</strong>
+      กลยุทธ์ที่ชนะ 70% ของการเทรดก็ยังมี edge ติดลบได้
+      ถ้าขาดทุนมากพอ
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">ตัวอย่างที่คำนวณแล้ว</span>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>กลยุทธ์</th>
+            <th>Win rate</th>
+            <th>กำไรเฉลี่ย</th>
+            <th>ขาดทุนเฉลี่ย</th>
+            <th>E[trade]</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>A — "ดูแข็งแกร่ง"</strong></td>
+            <td class="mono">70%</td>
+            <td class="mono">$50</td>
+            <td class="mono">$200</td>
+            <td class="neg">0.70×$50 − 0.30×$200 = −$25</td>
+          </tr>
+          <tr>
+            <td><strong>B — "ดูอ่อนแอ"</strong></td>
+            <td class="mono">40%</td>
+            <td class="mono">$250</td>
+            <td class="mono">$100</td>
+            <td class="pos">0.40×$250 − 0.60×$100 = +$40</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p style="font-size: 0.875rem; color: var(--text-muted); margin-top: 0.5rem; margin-bottom: 0; max-width: none;">
+        กลยุทธ์ A ชนะส่วนใหญ่แต่ก็ยังขาดทุน
+        กลยุทธ์ B แพ้ส่วนใหญ่แต่ก็ยังทำกำไร
+        กลยุทธ์ที่มี win rate สูงกลับมี edge ติดลบ ส่วนกลยุทธ์ที่มี win rate ต่ำกลับมี edge เป็นบวก
+      </p>
+    </div>
+
+    <h3>แล้วกลยุทธ์ใน codebase นี้ล่ะ?</h3>
+
+    <p>
+      กลยุทธ์จริงที่รัน live ใน go-trader สังเกตใน 340 การเทรด อาจแสดงให้เห็น:
+      win rate 53.2%, กำไรเฉลี่ย 1.42%, ขาดทุนเฉลี่ย 1.18% (เป็น return ต่อ capital)
+    </p>
+
+    <div class="formula">
+      E[trade] = 0.532 × 1.42% − 0.468 × 1.18% = 0.755% − 0.552% = +0.203%
+    </div>
+
+    <p>
+      นั่นคือ edge เล็กน้อย — แค่ 0.20% ต่อการเทรด แต่เมื่อ compound ใน 340 การเทรด
+      ก็ได้ผลตอบแทนที่มีนัยสำคัญ <code>scheduler/sharpe.go</code> และ leaderboard
+      ทำงานสะสมสถิติเหล่านี้เพื่อให้คุณเห็นว่า live edge ยังตรงกับที่ backtest ทำนายไว้หรือไม่
+    </p>
+  </section>
+
+  <!-- ─── Section 2: Why Edge Is Hard ────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>ทำไม Edge จึงหาได้ยาก</h2>
+
+    <p>
+      ปัญหาสามประการทำให้ edge ที่แท้จริงหายากและพิสูจน์ได้ยาก
+    </p>
+
+    <h3>1. Variance ซ่อน edge ในช่วงสั้น</h3>
+    <p>
+      แม้มี edge เป็นบวกจริง คุณก็อาจแพ้ได้ 10 ครั้งติดต่อกัน — นั่นคือ variance ปกติ
+      ไม่ใช่หลักฐานว่า edge หายไป ด้วย edge +0.2% ต่อการเทรดและส่วนเบี่ยงเบนมาตรฐาน
+      ต่อการเทรดประมาณ 2% คุณต้องการการเทรดราว 400 ครั้ง
+      จึงจะมั่นใจทางสถิติได้ว่า edge ที่สังเกตได้นั้นเป็นของจริงไม่ใช่โชค
+      นี่คือเหตุผลที่ go-trader backtests รันการเทรดหลายร้อยครั้ง ไม่ใช่หลายสิบครั้ง
+    </p>
+
+    <h3>2. In-sample backtests ถูก overfit กับข้อมูลในอดีต</h3>
+    <p>
+      ถ้าคุณค้นหาพารามิเตอร์นับพันชุดแล้วเลือกชุดที่ดูดีที่สุดกับข้อมูลในอดีต
+      คุณน่าจะค้นพบความบังเอิญ ไม่ใช่ edge พารามิเตอร์ถูก tune
+      ให้ตรงกับช่วงเวลาประวัติศาสตร์ที่เฉพาะเจาะจง นำไปใช้ในช่วงถัดไปแล้ว "edge" ก็หายไป
+      backtest harness ของ go-trader แก้ปัญหานี้ผ่าน walk-forward validation
+      และ economic gates — ทุกกลยุทธ์ต้องมีกลไกที่น่าเชื่อถือ (เหตุผลว่าทำไมรูปแบบนี้ควรคงอยู่)
+      ไม่ใช่แค่ correlation ในประวัติศาสตร์
+    </p>
+
+    <h3>3. Edge เสื่อมลงเมื่อสภาวะตลาดเปลี่ยน</h3>
+    <p>
+      กลยุทธ์ที่มี edge แท้จริงในตลาดขาขึ้น อาจมี edge เป็นศูนย์หรือติดลบ
+      เมื่อตลาด sideway signal เดิมยิงในทั้งสอง regime แต่ค่าคาดหวังแตกต่างกันอย่างสิ้นเชิง
+      นี่คือเหตุผลหลักที่ระบบ regime detection มีอยู่: codebase ติดตามว่ากลยุทธ์แต่ละตัว
+      มี edge ที่ผ่านการ validate แล้วในสภาวะตลาดไหนบ้าง
+      และหยุดเปิด position ใหม่เมื่อสภาวะปัจจุบันไม่ตรงกับชุดนั้น
+    </p>
+  </section>
+
+  <!-- ─── Section 3: The Pipeline ─────────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>Pipeline ในฐานะระบบรักษา Edge</h2>
+
+    <p>
+      ทุกขั้นตอนของ go-trader pipeline มีหน้าที่เดียวเกี่ยวกับ edge
+    </p>
+
+    <div class="pipeline">
+      <div class="pl-stage">วิจัย Signal</div>
+      <div class="pl-arrow">→</div>
+      <div class="pl-stage">Backtest</div>
+      <div class="pl-arrow">→</div>
+      <div class="pl-stage">Walk-forward</div>
+      <div class="pl-arrow">→</div>
+      <div class="pl-stage">Regime filter</div>
+      <div class="pl-arrow">→</div>
+      <div class="pl-stage">Live monitoring</div>
+    </div>
+
+    <table class="data-table" style="margin-top: 1rem;">
+      <thead>
+        <tr>
+          <th>ขั้นตอน</th>
+          <th>คำถาม edge ที่ตอบ</th>
+          <th>Component ใน go-trader</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>วิจัย Signal</strong></td>
+          <td>รูปแบบนี้มีกลไกที่น่าเชื่อถือหรือไม่?</td>
+          <td class="mono">open/registry.py</td>
+        </tr>
+        <tr>
+          <td><strong>Backtest</strong></td>
+          <td>edge ในอดีตรอดจากค่าธรรมเนียมและ slippage จริงได้หรือไม่?</td>
+          <td class="mono">backtest/run_backtest.py</td>
+        </tr>
+        <tr>
+          <td><strong>Walk-forward</strong></td>
+          <td>edge คงอยู่ในข้อมูล out-of-sample ได้หรือไม่?</td>
+          <td class="mono">--mode optimize sweep</td>
+        </tr>
+        <tr>
+          <td><strong>Regime filter</strong></td>
+          <td>ตลาดอยู่ในสภาวะที่ edge ได้รับการ validate แล้วหรือไม่?</td>
+          <td class="mono">regime*.go</td>
+        </tr>
+        <tr>
+          <td><strong>Live monitoring</strong></td>
+          <td>live edge ยังตรงกับที่ backtest ทำนายไว้หรือไม่?</td>
+          <td class="mono">sharpe.go, circuit breaker</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p style="margin-top: 1rem;">
+      Pipeline คือตัวกรอง ในแต่ละขั้นตอนกลยุทธ์บางตัวถูกคัดออก
+      สิ่งที่รอดจากทั้งห้าขั้นตอนควรมี edge ที่แท้จริงและยั่งยืน — ไม่ใช่แค่ความบังเอิญในประวัติศาสตร์
+    </p>
+
+    <div class="codebase-callout">
+      <h3>ใน go-trader</h3>
+      <p>
+        <strong>circuit breaker</strong> (<code>scheduler/circuit_breaker_alert.go</code>)
+        ทำงานหลังจากขาดทุนต่อเนื่องห้าครั้ง การขาดทุนต่อเนื่องเป็นสัญญาณสถิติที่แข็งแกร่งกว่า
+        การขาดทุนแบบสุ่ม — บ่งชี้ว่า regime ของตลาดอาจเปลี่ยนไปและกลยุทธ์อาจสูญเสีย edge
+        ในสภาวะปัจจุบัน circuit breaker หยุดการเทรดชั่วคราวและบังคับให้ผู้ดำเนินการตรวจสอบ
+        แทนที่จะเดินหน้าต่อด้วยกลยุทธ์ที่อาจมีค่าคาดหวังติดลบอยู่แล้ว
+      </p>
+      <p>
+        <strong>ระบบ regime detection</strong> (<code>scheduler/regime*.go</code>) คือ
+        การนำ conditional edge ไปใช้โดยตรงที่สุด config <code>allowed_regimes</code>
+        ของแต่ละกลยุทธ์ระบุว่าสภาวะตลาดไหนที่แสดง edge ที่ผ่านการ validate ใน backtest
+        เมื่อตลาด live เปลี่ยนออกนอกสภาวะเหล่านั้น กลยุทธ์จะหยุดเปิด position ใหม่ —
+        ไม่ใช่เพราะ risk limit แต่เพราะการคำนวณค่าคาดหวังไม่ถูกต้องอีกต่อไป
+      </p>
+      <p>
+        <strong>Sharpe tracker</strong> (<code>scheduler/sharpe.go</code>) วัดว่า live edge
+        ตรงกับ backtested edge หรือไม่ การลดลงอย่างมีนัยสำคัญของ live Sharpe คือสัญญาณเตือนล่วงหน้า
+        ว่ามีบางอย่างเปลี่ยนแปลง — ไม่ว่าจะเป็นสภาวะตลาดที่เปลี่ยนไป
+        หรือ edge จาก backtest ไม่เคยมีอยู่จริงตั้งแต่ต้น
+      </p>
+    </div>
+  </section>
+
+  <!-- ─── Quiz ─────────────────────────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>ทดสอบความเข้าใจ</h2>
+
+    <div class="quiz-card" data-correct="b">
+      <p class="question">1. กลยุทธ์หนึ่งมี win rate 55%, กำไรเฉลี่ย $80 และขาดทุนเฉลี่ย $100
+        edge ต่อการเทรดคือเท่าไร?</p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q1" value="a"> +$4.00 ต่อการเทรด</label>
+        <label class="option"><input type="radio" name="q1" value="b"> −$1.00 ต่อการเทรด</label>
+        <label class="option"><input type="radio" name="q1" value="c"> +$0.00 ต่อการเทรด</label>
+        <label class="option"><input type="radio" name="q1" value="d"> +$44.00 ต่อการเทรด</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: −$1.00 ต่อการเทรด</p>
+        <p class="explanation">
+          0.55 × $80 = $44 ค่าคาดหวังการชนะ 0.45 × $100 = $45 ค่าคาดหวังการแพ้
+          Edge = $44 − $45 = −$1.00 Win rate 55% ยังไม่พอ — การขาดทุนมากกว่าการชนะ 25%
+          ซึ่งมากกว่าข้อได้เปรียบของ win rate
+        </p>
+      </div>
+    </div>
+
+    <div class="quiz-card" data-correct="b">
+      <p class="question">2. ทำไม go-trader backtests จึงรันการเทรดหลายร้อยครั้งแทนที่จะเป็นหลักสิบ?</p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q2" value="a"> Exchange กำหนดประวัติการเทรดขั้นต่ำ</label>
+        <label class="option"><input type="radio" name="q2" value="b"> Variance ซ่อน edge จริงในกลุ่มตัวอย่างขนาดเล็ก</label>
+        <label class="option"><input type="radio" name="q2" value="c"> Sharpe ratio ต้องการข้อมูลเต็มหนึ่งปี</label>
+        <label class="option"><input type="radio" name="q2" value="d"> การเทรดมากขึ้นลดสัดส่วนค่าธรรมเนียมต่อการเทรด</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: Variance ซ่อน edge จริงในกลุ่มตัวอย่างขนาดเล็ก</p>
+        <p class="explanation">
+          ด้วย edge +0.2% ต่อการเทรดและ volatility ต่อการเทรดทั่วไปประมาณ 2% คุณต้องการ
+          ราว 400 การเทรดเพื่อแยกแยะ edge จริงจากโชคที่ความเชื่อมั่น 95%
+          การเทรดหลักสิบครั้งน้อยเกินไปมาก — การโชคดีต่อเนื่องมีลักษณะเหมือน edge จริง
+          ในระดับนั้น
+        </p>
+      </div>
+    </div>
+
+    <div class="quiz-card" data-correct="b">
+      <p class="question">3. บทบาทหลักของ circuit breaker ใน go-trader เกี่ยวกับ edge คืออะไร?</p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q3" value="a"> จำกัด drawdown สูงสุดรายวัน</label>
+        <label class="option"><input type="radio" name="q3" value="b"> หยุดการเทรดชั่วคราวเมื่อ edge อาจเสื่อมลง</label>
+        <label class="option"><input type="radio" name="q3" value="c"> ป้องกันไม่ให้สองกลยุทธ์เปิด position พร้อมกัน</label>
+        <label class="option"><input type="radio" name="q3" value="d"> แจ้งเตือนผู้ดำเนินการเกี่ยวกับปัญหาการเชื่อมต่อกับ exchange</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: หยุดการเทรดชั่วคราวเมื่อ edge อาจเสื่อมลง</p>
+        <p class="explanation">
+          การขาดทุนต่อเนื่องห้าครั้งเป็นสัญญาณสถิติว่าสภาวะตลาดอาจเปลี่ยนไปเกินขอบเขต
+          ที่ backtest จำลองไว้ circuit breaker บังคับให้มีการตรวจสอบโดยมนุษย์ก่อนที่การเทรดจะกลับมา
+          แทนที่จะเดินหน้าต่อด้วยกลยุทธ์ที่อาจมีค่าคาดหวังติดลบใน regime ปัจจุบัน
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Primary source ──────────────────────────────────────────────────── -->
+  <section class="primary-source">
+    <h2>แหล่งข้อมูลหลัก</h2>
+    <p>
+      <strong>Quantitative Trading: How to Build Your Own Algorithmic Trading Business</strong>
+      — Ernest P. Chan (Wiley, พิมพ์ครั้งที่ 2 ปี 2021) บทที่ 1–3 ครอบคลุม edge, วิธีการ backtest,
+      และเหตุผลที่พบบ่อยที่สุดว่าทำไม backtest ให้ผลที่ทำให้เข้าใจผิด เขียนโดยผู้ปฏิบัติจริง
+      ที่สร้างและรันกลยุทธ์ systematic ไม่ใช่นักวิชาการ นี่คือหนังสือเริ่มต้นที่เหมาะสมสำหรับเนื้อหานี้
+    </p>
+    <p>
+      ค้นหาได้จากร้านหนังสือที่คุณชอบ หรือตรวจสอบว่าห้องสมุดของคุณมี O'Reilly
+      digital edition หรือไม่ (isbn 978-1119800064)
+    </p>
+  </section>
+
+  <!-- ─── Footer nav ───────────────────────────────────────────────────────── -->
+  <nav class="lesson-nav">
+    <div class="ask-teacher">
+      <p>ถ้ามีอะไรที่ยังไม่ชัดเจน — สูตร แนวคิด หรือโค้ดบรรทัดไหน — ถามครูได้เลย
+        วางคำถามในบทสนทนาแล้วฉันจะตอบในบริบทนั้น</p>
+    </div>
+    <div class="nav-next">
+      <a href="0002-reading-a-backtest.html">ถัดไป: การอ่าน Backtest →</a>
+    </div>
+  </nav>
+
+</div><!-- .lesson-wrap -->
+
+<script>
+/* ==========================================================================
+   Canvas: two equity curves (no-edge vs with-edge)
+   ========================================================================== */
+
+(function () {
+  const canvas = document.getElementById('edgeCurves');
+  if (!canvas) return;
+
+  const lcg = function (seed) {
+    var s = seed >>> 0;
+    return function () {
+      s = (Math.imul(s, 1664525) + 1013904223) | 0;
+      return (s >>> 0) / 4294967295;
+    };
+  };
+
+  const simulate = function (rng, winRate, avgWin, avgLoss, n) {
+    var path = [1.0];
+    var eq = 1.0;
+    for (var i = 0; i < n; i++) {
+      var won = rng() < winRate;
+      eq *= (1 + (won ? avgWin : -avgLoss) / 100);
+      path.push(eq);
+    }
+    return path;
+  };
+
+  var N = 200;
+  var pathA = simulate(lcg(42),  0.50, 1.00, 1.00, N);
+  var pathB = simulate(lcg(137), 0.53, 1.10, 0.90, N);
+
+  var COLOR_A = '#8596A8';
+  var COLOR_B = '#C9A348';
+  var COLOR_BASE = 'rgba(26,35,50,0.12)';
+  var FONT = '500 11px "Source Sans 3", system-ui, sans-serif';
+  var FONT_PCT = '400 10px "Source Sans 3", system-ui, sans-serif';
+
+  var W, H, dpr, ctx;
+  var PAD_L = 10, PAD_R = 88, PAD_T = 18, PAD_B = 28;
+  var plotW, plotH, yMin, yMax;
+
+  function setup() {
+    var container = canvas.parentElement;
+    W = container.offsetWidth;
+    H = 220;
+    dpr = window.devicePixelRatio || 1;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    plotW = W - PAD_L - PAD_R;
+    plotH = H - PAD_T - PAD_B;
+
+    var all = pathA.concat(pathB);
+    yMin = Math.min.apply(null, all) - 0.02;
+    yMax = Math.max.apply(null, all) + 0.04;
+  }
+
+  function xAt(i)  { return PAD_L + (i / N) * plotW; }
+  function yAt(v)  { return PAD_T + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+  function drawGrid() {
+    var y = yAt(1.0);
+    ctx.beginPath();
+    ctx.moveTo(PAD_L, y);
+    ctx.lineTo(PAD_L + plotW, y);
+    ctx.strokeStyle = COLOR_BASE;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = 'rgba(26,35,50,0.3)';
+    ctx.font = '400 10px "Source Sans 3", system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('0%', 2, y);
+  }
+
+  function drawCurve(path, color, end, lineWidth) {
+    if (end < 1) return;
+    ctx.beginPath();
+    ctx.moveTo(xAt(0), yAt(path[0]));
+    for (var i = 1; i <= end; i++) {
+      ctx.lineTo(xAt(i), yAt(path[i]));
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+
+  function drawLabels(alpha) {
+    if (alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+
+    var xA = xAt(N) + 6;
+    var yA = yAt(pathA[N]);
+    ctx.fillStyle = COLOR_A;
+    ctx.font = FONT;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('ไม่มี edge', xA, yA - 6);
+    var pctA = ((pathA[N] - 1) * 100).toFixed(1);
+    ctx.font = FONT_PCT;
+    ctx.fillStyle = 'rgba(133,150,168,0.8)';
+    ctx.fillText((pctA >= 0 ? '+' : '') + pctA + '%', xA, yA + 6);
+
+    var xB = xAt(N) + 6;
+    var yB = yAt(pathB[N]);
+    ctx.fillStyle = COLOR_B;
+    ctx.font = FONT;
+    ctx.fillText('มี edge', xB, yB - 6);
+    var pctB = ((pathB[N] - 1) * 100).toFixed(1);
+    ctx.font = FONT_PCT;
+    ctx.fillStyle = 'rgba(201,163,72,0.75)';
+    ctx.fillText('+' + pctB + '%', xB, yB + 6);
+
+    ctx.globalAlpha = 1;
+  }
+
+  var DRAW_FRAMES  = 180;
+  var HOLD_FRAMES  = 90;
+  var FADE_FRAMES  = 20;
+  var CYCLE = DRAW_FRAMES + HOLD_FRAMES + FADE_FRAMES;
+  var frame = 0;
+  var rafId;
+
+  function tick() {
+    ctx.clearRect(0, 0, W, H);
+    drawGrid();
+
+    var t = frame % CYCLE;
+    var progress, labelAlpha;
+    if (t < DRAW_FRAMES) {
+      progress    = t / DRAW_FRAMES;
+      labelAlpha  = 0;
+    } else if (t < DRAW_FRAMES + HOLD_FRAMES) {
+      progress    = 1;
+      labelAlpha  = Math.min((t - DRAW_FRAMES) / 12, 1);
+    } else {
+      progress    = 1;
+      var fadeT   = t - DRAW_FRAMES - HOLD_FRAMES;
+      labelAlpha  = Math.max(1 - fadeT / FADE_FRAMES, 0);
+    }
+
+    var drawn = Math.round(progress * N);
+    drawCurve(pathA, COLOR_A, drawn, 1.5);
+    drawCurve(pathB, COLOR_B, drawn, 2.0);
+    drawLabels(labelAlpha);
+
+    frame++;
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function init() {
+    setup();
+    if (rafId) cancelAnimationFrame(rafId);
+    tick();
+  }
+
+  init();
+
+  var resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      if (rafId) cancelAnimationFrame(rafId);
+      frame = 0;
+      init();
+    }, 120);
+  });
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    cancelAnimationFrame(rafId);
+    setup();
+    ctx.clearRect(0, 0, W, H);
+    drawGrid();
+    drawCurve(pathA, COLOR_A, N, 1.5);
+    drawCurve(pathB, COLOR_B, N, 2.0);
+    drawLabels(1);
+  }
+}());
+
+/* ==========================================================================
+   Quiz interactivity
+   ========================================================================== */
+
+document.querySelectorAll('.quiz-card').forEach(function (card) {
+  var correct = card.dataset.correct;
+  var btn = card.querySelector('.reveal-btn');
+  var reveal = card.querySelector('.quiz-reveal');
+  var inputs = card.querySelectorAll('.option input[type="radio"]');
+
+  btn.addEventListener('click', function () {
+    reveal.hidden = false;
+    inputs.forEach(function (inp) {
+      inp.disabled = true;
+      var label = inp.closest('.option');
+      if (inp.value === correct) {
+        label.classList.add('correct');
+      } else if (inp.checked) {
+        label.classList.add('wrong');
+      }
+    });
+    btn.textContent = 'เฉลยแล้ว';
+    btn.disabled = true;
+  });
+});
+</script>
+</body>
+</html>
