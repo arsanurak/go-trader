@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บทเรียนที่ 02 — Sharpe Ratio: วัด Edge ให้คุ้มความเสี่ยง</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-02 additions ── */
+
+    /* Hero dual-curve captions */
+    .fig-rough { color: #B0543A; font-weight: 600; }
+    .fig-smooth { color: var(--positive); font-weight: 600; }
+
+    /* Sharpe scale bar with needle */
+    .sharpe-scale-outer {
+      margin: 1.5rem 0 1rem;
+    }
+    .sharpe-scale-track {
+      position: relative;
+      height: 14px;
+      border-radius: 7px;
+      background: linear-gradient(
+        to right,
+        #C0392B 0%,
+        #E67E22 28%,
+        #C9A348 52%,
+        #27AE60 75%,
+        #2E7D52 100%
+      );
+      margin-bottom: 0.25rem;
+    }
+    .sharpe-needle {
+      position: absolute;
+      top: -3px;
+      transform: translateX(-50%);
+      width: 4px;
+      height: 20px;
+      background: var(--text);
+      border-radius: 2px;
+      transition: left 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      pointer-events: none;
+    }
+    .sharpe-scale-ticks {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      color: var(--text-faint);
+      padding: 0 2px;
+    }
+    .sharpe-zone-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      margin-top: 0.5rem;
+    }
+    .sharpe-zone {
+      font-size: 0.65rem;
+      text-align: center;
+      padding: 0.2rem 0.25rem;
+      color: var(--text-muted);
+      border-top: 2px solid var(--border);
+    }
+    .sharpe-zone:nth-child(1) { border-color: #C0392B; }
+    .sharpe-zone:nth-child(2) { border-color: #C9A348; }
+    .sharpe-zone:nth-child(3) { border-color: #27AE60; }
+    .sharpe-zone:nth-child(4) { border-color: #2E7D52; }
+
+    /* Interactive Sharpe Lab */
+    .sharpe-lab {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1.5rem;
+      margin: 1.5rem 0;
+    }
+    .sharpe-lab-eyebrow {
+      font-size: var(--xs);
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 1.25rem;
+    }
+    .lab-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
+    @media (max-width: 580px) {
+      .lab-layout { grid-template-columns: 1fr; }
+    }
+    .lab-controls { display: flex; flex-direction: column; gap: 1rem; }
+    .lab-slider-row { display: flex; flex-direction: column; gap: 0.25rem; }
+    .lab-slider-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: var(--sm);
+      font-weight: 500;
+      color: var(--text);
+    }
+    .lab-slider-val {
+      font-family: var(--font-mono);
+      font-size: var(--xs);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .lab-range {
+      width: 100%;
+      accent-color: var(--signal);
+    }
+    .lab-output {
+      margin-top: 0.875rem;
+      padding: 0.875rem 1rem;
+      background: var(--ground);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+    }
+    .lab-output-eyebrow {
+      font-size: var(--xs);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 0.25rem;
+    }
+    .lab-sharpe-big {
+      font-family: var(--font-mono);
+      font-size: var(--4xl);
+      font-weight: 500;
+      line-height: 1.05;
+      color: var(--text);
+      transition: color 0.3s;
+    }
+    .lab-sharpe-verdict {
+      font-size: var(--sm);
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+      min-height: 1.2em;
+    }
+    .lab-canvas-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .lab-canvas-wrap canvas {
+      display: block;
+      width: 100%;
+      background: var(--ground);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+    }
+    .lab-scale-wrap { margin-top: 0.25rem; }
+
+    /* Annualization callout */
+    .annualize-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.25rem 0;
+    }
+    @media (max-width: 480px) {
+      .annualize-grid { grid-template-columns: 1fr; }
+    }
+    .annualize-cell {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.875rem 1rem;
+    }
+    .annualize-cell dt {
+      font-size: var(--xs);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 0.375rem;
+    }
+    .annualize-cell dd {
+      font-family: var(--font-mono);
+      font-size: var(--sm);
+      color: var(--text);
+    }
+
+    /* Lab scale (inside the lab) */
+    .lab-inner-scale {
+      position: relative;
+      height: 10px;
+      border-radius: 5px;
+      background: linear-gradient(
+        to right,
+        #C0392B 0%,
+        #E67E22 28%,
+        #C9A348 52%,
+        #27AE60 75%,
+        #2E7D52 100%
+      );
+    }
+    .lab-inner-needle {
+      position: absolute;
+      top: -3px;
+      transform: translateX(-50%);
+      width: 3px;
+      height: 16px;
+      background: var(--text);
+      border-radius: 1px;
+      transition: left 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    }
+    .lab-scale-ticks {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 0.62rem;
+      color: var(--text-faint);
+      margin-top: 0.25rem;
+    }
+  </style>
+</head>
+<body>
+<div class="lesson-wrap">
+
+  <!-- ─── Header ─────────────────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">
+      <span class="course-label">การเทรดเชิงปริมาณ</span>
+      <span class="lesson-label">บทเรียนที่ 02</span>
+    </div>
+    <h1 class="lesson-title">Sharpe Ratio: วัด Edge ให้คุ้มความเสี่ยง</h1>
+    <p class="lesson-thesis">
+      บทเรียนที่แล้ว เรารู้ว่า edge คือค่าคาดหวังเป็นบวกต่อการเทรด
+      แต่ edge เท่ากันสองตัวอาจมีความเสี่ยงต่างกันอย่างสิ้นเชิง
+      <em>Sharpe ratio</em> คือตัวชี้วัดที่รวมทั้ง return และ volatility
+      เข้าด้วยกัน — เป็นตัวเลขตัวเดียวที่ backtest ทุกอันควรรายงาน
+    </p>
+  </header>
+
+  <!-- ─── Hero: same-return, different-volatility curves ──────────────────── -->
+  <figure class="hero-figure">
+    <canvas id="sharpeCurves" height="230"
+      aria-label="เส้น equity curve สองเส้น กลยุทธ์ A และ B มีผลตอบแทนรวมใกล้เคียงกัน แต่กลยุทธ์ A มีความผันผวนสูงมากในขณะที่กลยุทธ์ B เดินขึ้นอย่างสม่ำเสมอ"></canvas>
+    <figcaption>
+      <span class="fig-rough">■ กลยุทธ์ A</span> — return รวม ~+24%, volatility สูง. Sharpe ต่ำ.&ensp;
+      <span class="fig-smooth">■ กลยุทธ์ B</span> — return รวม ~+26%, volatility ต่ำ. Sharpe สูง.&ensp;
+      ผลตอบแทนใกล้กัน แต่เส้นทางต่างกันอย่างสิ้นเชิง
+    </figcaption>
+  </figure>
+
+  <!-- ─── Objectives ──────────────────────────────────────────────────────── -->
+  <section class="objectives">
+    <h2>หลังจากจบบทเรียนนี้ คุณจะสามารถ</h2>
+    <ol>
+      <li>คำนวณ Sharpe ratio จาก mean return และ std dev ต่อการเทรด</li>
+      <li>อธิบายว่าทำไมสองกลยุทธ์ที่มี return เท่ากันอาจมีคุณภาพ edge ต่างกันมาก</li>
+      <li>อ่านค่า Sharpe จาก backtest output ของ go-trader และบอกได้ว่าอยู่ในระดับใด</li>
+    </ol>
+  </section>
+
+  <!-- ─── Section 1: ปัญหาของ return อย่างเดียว ──────────────────────────── -->
+  <section class="lesson-section">
+    <h2>ปัญหาของ return อย่างเดียว</h2>
+
+    <p>
+      สมมติว่ามีกลยุทธ์สองตัว ทั้งคู่ทำ return +25% ในปีเดียวกัน
+      คุณควรเลือกตัวไหน?
+    </p>
+
+    <p>
+      ถ้าไม่รู้อะไรเพิ่มเติม คำถามนั้นตอบไม่ได้ เพราะ return เท่ากัน
+      แต่ความเสี่ยงอาจต่างกันมาก ดูกรณีนี้:
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">ตัวอย่าง: return เท่ากัน ความเสี่ยงต่างกัน</span>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>กลยุทธ์</th>
+            <th>Return รวม</th>
+            <th>Drawdown สูงสุด</th>
+            <th>เดือนที่แย่ที่สุด</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>A — rough</strong></td>
+            <td class="mono">+25%</td>
+            <td class="neg">−38%</td>
+            <td class="neg">−18%</td>
+          </tr>
+          <tr>
+            <td><strong>B — smooth</strong></td>
+            <td class="mono">+25%</td>
+            <td class="neg">−9%</td>
+            <td class="neg">−4%</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size:0.875rem; color:var(--text-muted); margin-top:0.5rem; margin-bottom:0; max-width:none;">
+        กลยุทธ์ A ต้องทนดูพอร์ตจมลง 38% ก่อนจะกลับขึ้นมา
+        นั้นคือ drawdown ที่ทำให้ผู้ดำเนินการหยุดกลยุทธ์ก่อนกำหนด
+        ทำให้ไม่ได้รับ return ที่ backtest สัญญาไว้
+      </p>
+    </div>
+
+    <p>
+      Sharpe ratio แก้ปัญหานี้โดยรวม return และ volatility เข้าเป็นตัวเลขเดียว
+      ที่สะท้อนว่า "ได้ return มากแค่ไหนต่อหน่วยของความผันผวนที่ต้องแบกรับ"
+    </p>
+  </section>
+
+  <!-- ─── Section 2: สูตร Sharpe Ratio ──────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>สูตร Sharpe Ratio</h2>
+
+    <p>
+      สูตรที่ใช้จริงใน backtest มักละ risk-free rate ออก (เพราะกลยุทธ์ระยะสั้น
+      เปรียบเทียบกับ risk-free ไม่ได้ความ) เหลือเพียง:
+    </p>
+
+    <div class="formula">
+      S = μ / σ
+    </div>
+
+    <p>
+      โดยที่ <strong>μ</strong> คือค่าเฉลี่ย return ต่อการเทรด
+      และ <strong>σ</strong> คือส่วนเบี่ยงเบนมาตรฐาน (standard deviation)
+      ของ return เหล่านั้น
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">ตัวอย่างที่คำนวณแล้ว</span>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>กลยุทธ์</th>
+            <th>μ ต่อการเทรด</th>
+            <th>σ ต่อการเทรด</th>
+            <th>Sharpe = μ/σ</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>A — rough</strong></td>
+            <td class="mono">+0.20%</td>
+            <td class="mono">2.00%</td>
+            <td class="mono"><span style="color:var(--negative)">0.10</span></td>
+          </tr>
+          <tr>
+            <td><strong>B — smooth</strong></td>
+            <td class="mono">+0.20%</td>
+            <td class="mono">0.50%</td>
+            <td class="mono"><span style="color:var(--positive)">0.40</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size:0.875rem; color:var(--text-muted); margin-top:0.5rem; margin-bottom:0; max-width:none;">
+        μ เท่ากันทุกประการ ต่างกันที่ σ เท่านั้น
+        กลยุทธ์ B มี Sharpe สูงกว่า 4 เท่า แม้จะทำ return ต่อการเทรดเท่ากัน
+      </p>
+    </div>
+
+    <h3>ทำไม σ จึงสำคัญ?</h3>
+
+    <p>
+      σ สูงหมายความว่าผลการเทรดแต่ละครั้งกระจายออกกว้าง — บางครั้งชนะมาก
+      บางครั้งแพ้มาก แม้ค่าเฉลี่ยจะเป็นบวก ความผันผวนสูงหมายถึง:
+    </p>
+
+    <ul style="margin: 0.75rem 0 1rem 1.25rem; display:flex; flex-direction:column; gap:0.375rem;">
+      <li style="font-size:var(--base);">drawdown ลึกกว่า — ต้องทนแบกขาดทุนมากกว่าก่อนจะ recover</li>
+      <li style="font-size:var(--base);">ต้องใช้ trade มากกว่าเพื่อ "พิสูจน์" ว่า edge จริง (จากบทที่แล้ว)</li>
+      <li style="font-size:var(--base);">position size ที่ปลอดภัยต้องเล็กกว่า — ทำให้ return รวมต่ำลง</li>
+    </ul>
+  </section>
+
+  <!-- ─── Section 3: อ่านค่า Sharpe อย่างไร ──────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>อ่านค่า Sharpe อย่างไร</h2>
+
+    <p>
+      ค่า Sharpe ไม่มีหน่วย จึงเปรียบเทียบข้ามกลยุทธ์ได้โดยตรง
+      แถบสีด้านล่างแสดงระดับคุณภาพโดยทั่วไปสำหรับกลยุทธ์ systematic trading:
+    </p>
+
+    <div class="sharpe-scale-outer">
+      <div class="sharpe-scale-track" id="staticScaleTrack">
+        <!-- needle not used here — static display only -->
+      </div>
+      <div class="sharpe-scale-ticks">
+        <span>0</span><span>0.5</span><span>1.0</span><span>1.5</span><span>2.0+</span>
+      </div>
+      <div class="sharpe-zone-row">
+        <div class="sharpe-zone">ต่ำมาก<br>&lt; 0.5</div>
+        <div class="sharpe-zone">ปานกลาง<br>0.5 – 1.0</div>
+        <div class="sharpe-zone">ดี<br>1.0 – 1.5</div>
+        <div class="sharpe-zone">ยอดเยี่ยม<br>(หรือ overfit?)<br>1.5+</div>
+      </div>
+    </div>
+
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>ช่วง Sharpe</th>
+          <th>ความหมายในทางปฏิบัติ</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mono" style="color:var(--negative)">0 – 0.5</td>
+          <td>Return ไม่คุ้มความผันผวน — ต้องตั้งคำถามว่า edge แท้จริงหรือไม่</td>
+        </tr>
+        <tr>
+          <td class="mono" style="color:var(--accent)">0.5 – 1.0</td>
+          <td>ยอมรับได้สำหรับบางกลยุทธ์ — ต้องการ position sizing ระวังมากขึ้น</td>
+        </tr>
+        <tr>
+          <td class="mono" style="color:var(--positive)">1.0 – 1.5</td>
+          <td>ดี — edge แข็งแกร่งเพียงพอที่จะ compound ได้อย่างมั่นคง</td>
+        </tr>
+        <tr>
+          <td class="mono" style="color:#2E7D52">1.5+</td>
+          <td>ยอดเยี่ยม — แต่ตรวจสอบ overfitting ก่อนเสมอ (บทเรียนถัดไป)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      กลยุทธ์ "real-world" ที่ผ่าน walk-forward มักได้ Sharpe ระหว่าง 0.5–1.5
+      ค่าที่สูงกว่า 2.0 ใน backtest ควรตั้งคำถามเสมอว่า in-sample overfitting หรือไม่
+    </p>
+  </section>
+
+  <!-- ─── Section 4: Sharpe Lab ──────────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>ทดลอง: Sharpe Lab</h2>
+
+    <p>
+      ปรับ slider ด้านล่างเพื่อดูว่า μ และ σ
+      ส่งผลต่อ Sharpe ratio และรูปร่างของ equity curve อย่างไร
+    </p>
+
+    <div class="sharpe-lab">
+      <p class="sharpe-lab-eyebrow">Sharpe Lab — ทดลองปรับค่า</p>
+
+      <div class="lab-layout">
+
+        <div class="lab-controls">
+          <div class="lab-slider-row">
+            <div class="lab-slider-label">
+              <span>μ — ค่าเฉลี่ย return ต่อการเทรด</span>
+              <span class="lab-slider-val" id="muVal">0.20%</span>
+            </div>
+            <input class="lab-range" id="muSlider" type="range"
+              min="5" max="80" value="20" step="5"
+              aria-label="mean return per trade">
+          </div>
+
+          <div class="lab-slider-row">
+            <div class="lab-slider-label">
+              <span>σ — std dev ต่อการเทรด</span>
+              <span class="lab-slider-val" id="sigmaVal">1.20%</span>
+            </div>
+            <input class="lab-range" id="sigmaSlider" type="range"
+              min="20" max="300" value="120" step="10"
+              aria-label="std dev per trade">
+          </div>
+
+          <div class="lab-output">
+            <p class="lab-output-eyebrow">Sharpe Ratio</p>
+            <div class="lab-sharpe-big" id="labSharpeNum">0.17</div>
+            <p class="lab-sharpe-verdict" id="labVerdict">ต่ำมาก — ต้องการ edge ที่แข็งแกร่งกว่า</p>
+          </div>
+        </div>
+
+        <div class="lab-canvas-wrap">
+          <canvas id="labCurve" height="130"
+            aria-label="equity curve จำลองที่เปลี่ยนแปลงตาม slider"></canvas>
+          <div class="lab-scale-wrap">
+            <div style="position:relative;">
+              <div class="lab-inner-scale" id="labScaleBar"></div>
+              <div class="lab-inner-needle" id="labNeedle" style="left:6.8%;"></div>
+            </div>
+            <div class="lab-scale-ticks">
+              <span>0</span><span>0.5</span><span>1.0</span><span>1.5</span><span>2.0+</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p>
+      สังเกตว่าเมื่อ σ เพิ่มขึ้น equity curve จะกระเด้งขึ้นลงมากขึ้น
+      แม้ μ จะยังคงเดิม — นั่นคือสิ่งที่ Sharpe ratio วัด
+    </p>
+  </section>
+
+  <!-- ─── Section 5: Annualization ────────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>Sharpe ต่อปี — Annualization</h2>
+
+    <p>
+      Sharpe ที่คำนวณจากข้อมูลต่อการเทรดนั้นขึ้นอยู่กับความถี่ของการเทรด
+      เพื่อให้เปรียบเทียบกันได้ระหว่างกลยุทธ์ที่เทรดความถี่ต่างกัน
+      ให้ปรับเป็น Sharpe ต่อปีโดยคูณ <code>√N</code>
+      โดยที่ N คือจำนวนการเทรดต่อปี:
+    </p>
+
+    <div class="formula">
+      S_annual = S_trade × √N_trades_per_year
+    </div>
+
+    <div class="annualize-grid">
+      <dl class="annualize-cell">
+        <dt>เทรดวันละครั้ง<br>(252 ครั้งต่อปี)</dt>
+        <dd>S_annual = S_trade × √252<br>≈ S_trade × 15.87</dd>
+      </dl>
+      <dl class="annualize-cell">
+        <dt>เทรดสัปดาห์ละครั้ง<br>(52 ครั้งต่อปี)</dt>
+        <dd>S_annual = S_trade × √52<br>≈ S_trade × 7.21</dd>
+      </dl>
+    </div>
+
+    <p>
+      ตัวอย่าง: กลยุทธ์รายวัน μ = 0.10%, σ = 1.20% ต่อการเทรด
+    </p>
+
+    <div class="formula">
+      S_trade = 0.10 / 1.20 = 0.083
+      S_annual = 0.083 × √252 ≈ 1.32
+    </div>
+
+    <p>
+      ค่า Sharpe ที่ go-trader รายงานใน backtest output
+      มักเป็น annualized Sharpe แล้ว ดังนั้นให้ตีความตามตาราง "ช่วง Sharpe" ด้านบนได้เลย
+    </p>
+  </section>
+
+  <!-- ─── Section 6: Sharpe ใน go-trader ─────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>Sharpe ใน go-trader</h2>
+
+    <div class="codebase-callout">
+      <h3>ใน go-trader</h3>
+
+      <p>
+        <strong>sharpe.go</strong> (<code>scheduler/sharpe.go</code>)
+        คำนวณ Sharpe ratio แบบ running สำหรับการเทรด live
+        ทุกครั้งที่ปิด position ค่านี้จะอัพเดท
+        ทำให้คุณเห็นได้ว่า live edge ยังตรงกับที่ backtest ทำนายไว้หรือไม่
+        การลดลงอย่างรวดเร็วของ live Sharpe คือสัญญาณเตือนล่วงหน้าที่แม่นยำที่สุด
+        ว่า regime ของตลาดอาจเปลี่ยนไป
+      </p>
+
+      <p>
+        <strong>circuit_breaker_alert.go</strong> (<code>scheduler/circuit_breaker_alert.go</code>)
+        ทำงานเป็น "Sharpe detector อย่างเร่งด่วน" — แทนที่จะรอให้ Sharpe
+        ลดลงทีละน้อยข้ามสัปดาห์ มันตรวจจับการขาดทุนต่อเนื่อง 5 ครั้ง
+        ซึ่งเป็นสัญญาณสถิติที่บ่งว่า σ เพิ่มขึ้นหรือ μ ลดลง — ทั้งคู่ทำให้ Sharpe ลดลง
+        ทันที
+      </p>
+
+      <p>
+        <strong>backtest output</strong> (ผล <code>run_backtest.py</code>)
+        รายงาน Sharpe ในบรรทัด summary เช่น:
+        <code>sharpe_ratio: 1.18</code> — ตีความตามแถบสีที่เห็นในบทเรียนนี้
+        กลยุทธ์ที่ผ่านเข้า live มักต้องผ่าน Sharpe ขั้นต่ำ
+        ที่กำหนดโดยผู้ดำเนินการก่อนเสมอ
+      </p>
+    </div>
+  </section>
+
+  <!-- ─── Quiz ─────────────────────────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>ทดสอบความเข้าใจ</h2>
+
+    <div class="quiz-card" data-correct="a">
+      <p class="question">
+        1. กลยุทธ์หนึ่งมี μ = 0.30% ต่อการเทรด และ σ = 1.50% ต่อการเทรด
+        Sharpe ratio คือเท่าไร?
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q1" value="a"> 0.20 ต่อการเทรด (= 0.30 ÷ 1.50)</label>
+        <label class="option"><input type="radio" name="q1" value="b"> 0.45 ต่อการเทรด (= 0.30 × 1.50)</label>
+        <label class="option"><input type="radio" name="q1" value="c"> 1.50 ต่อการเทรด (= σ เท่านั้น)</label>
+        <label class="option"><input type="radio" name="q1" value="d"> 4.50 ต่อการเทรด (= 1.50 ÷ 0.30)</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: 0.20 ต่อการเทรด (= 0.30 ÷ 1.50)</p>
+        <p class="explanation">
+          Sharpe = μ / σ = 0.30% / 1.50% = 0.20
+          ตัวเลข 0.30 และ 1.50 มีหน่วยเป็น % เหมือนกัน จึงหักล้างกัน
+          เหลือเป็น ratio ไม่มีหน่วย
+          ค่า 0.20 อยู่ในโซน "ต่ำมาก" — return ไม่คุ้มความผันผวน
+        </p>
+      </div>
+    </div>
+
+    <div class="quiz-card" data-correct="c">
+      <p class="question">
+        2. กลยุทธ์ A มี return รวม +40% แต่ Sharpe = 0.35
+        กลยุทธ์ B มี return รวม +18% แต่ Sharpe = 1.40
+        ควรเลือกตัวไหนสำหรับกลยุทธ์ระยะยาว และเพราะอะไร?
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q2" value="a"> กลยุทธ์ A — return สูงกว่ามากกว่า 2 เท่า</label>
+        <label class="option"><input type="radio" name="q2" value="b"> กลยุทธ์ A — เทรดมากกว่าจึงมีข้อมูลสถิติมากกว่า</label>
+        <label class="option"><input type="radio" name="q2" value="c"> กลยุทธ์ B — Sharpe สูงกว่า หมายถึง drawdown เล็กกว่า</label>
+        <label class="option"><input type="radio" name="q2" value="d"> กลยุทธ์ B — return ที่ต่ำกว่าพิสูจน์ว่าไม่ overfit</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: กลยุทธ์ B — Sharpe สูงกว่า หมายถึง drawdown เล็กกว่า</p>
+        <p class="explanation">
+          Sharpe 0.35 ของ A บอกว่า return นั้นมาพร้อมกับ volatility สูงมาก
+          สิ่งที่เกิดขึ้นคือ drawdown ขนาดใหญ่ — ในทางปฏิบัติ
+          drawdown ที่ลึกเกินไปทำให้ผู้ดำเนินการหยุดกลยุทธ์ก่อนถึง return นั้น
+          Sharpe 1.40 ของ B บ่งบอกว่า return ที่ต่ำกว่าสามารถ compound ได้อย่างมั่นคงกว่ามาก
+        </p>
+      </div>
+    </div>
+
+    <div class="quiz-card" data-correct="b">
+      <p class="question">
+        3. กลยุทธ์รายวัน (252 ครั้งต่อปี) มี S_trade = 0.07
+        Sharpe ต่อปีคือเท่าไร? (√252 ≈ 15.87)
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q3" value="a"> 0.44 ต่อปี (= 0.07 × √52 ≈ 0.07 × 7.21)</label>
+        <label class="option"><input type="radio" name="q3" value="b"> 1.11 ต่อปี (= 0.07 × √252 ≈ 0.07 × 15.87)</label>
+        <label class="option"><input type="radio" name="q3" value="c"> 1.76 ต่อปี (= 0.07 × √252² ≈ 0.07 × 252)</label>
+        <label class="option"><input type="radio" name="q3" value="d"> 0.07 ต่อปี (ไม่ต้องปรับ annualize)</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: 1.11 ต่อปี (= 0.07 × √252 ≈ 0.07 × 15.87)</p>
+        <p class="explanation">
+          S_annual = S_trade × √N โดยที่ N = 252 สำหรับกลยุทธ์รายวัน
+          0.07 × 15.87 ≈ 1.11 — อยู่ในโซน "ดี"
+          สิ่งสำคัญ: √N ไม่ใช่ N เอง (option C) การคูณด้วย N ตรงๆ จะทำให้ค่าสูงเกินจริงมาก
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Primary source ──────────────────────────────────────────────────── -->
+  <section class="primary-source">
+    <h2>แหล่งข้อมูลหลัก</h2>
+    <p>
+      <strong>Quantitative Trading</strong> — Ernest P. Chan บทที่ 3 ครอบคลุม
+      Sharpe ratio, การตีความค่า annualized Sharpe จาก backtest,
+      และเหตุผลที่กลยุทธ์จริงมักได้ Sharpe ต่ำกว่าที่คิด
+      Chan เป็นผู้ปฏิบัติจริงและอธิบายในแง่ที่ engineer เข้าใจได้ง่าย
+    </p>
+    <p>
+      อ่านต่อ: บทที่ 6 "Risk Management" อธิบายว่า Sharpe
+      เชื่อมโยงกับ position sizing และ Kelly criterion อย่างไร
+      ซึ่งจะเป็นพื้นฐานของบทเรียนถัดไป
+    </p>
+  </section>
+
+  <!-- ─── Footer nav ───────────────────────────────────────────────────────── -->
+  <nav class="lesson-nav">
+    <div class="ask-teacher">
+      <p>มีคำถามเกี่ยวกับสูตร การตีความค่า หรือ Sharpe ที่เห็นใน backtest output ของ go-trader —
+        ถามในบทสนทนาได้เลย ฉันจะอธิบายในบริบทนั้น</p>
+    </div>
+    <div class="nav-next">
+      <a href="0001-what-is-trading-edge.html">← ย้อนกลับ: Trading Edge</a>
+    </div>
+  </nav>
+
+</div><!-- .lesson-wrap -->
+
+<script>
+/* ==========================================================================
+   Seeded LCG + Gaussian (Box-Muller)
+   ========================================================================== */
+
+function makeLCG(seed) {
+  var s = (seed >>> 0) || 1;
+  return function () {
+    s = (Math.imul(s, 1664525) + 1013904223) | 0;
+    return (s >>> 0) / 4294967296;
+  };
+}
+
+function gaussian(rng, mu, sigma) {
+  var u1 = Math.max(rng(), 1e-10);
+  var u2 = rng();
+  var z  = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  return mu + sigma * z;
+}
+
+function simulate(seed, muPct, sigmaPct, n) {
+  var rng  = makeLCG(seed);
+  var path = [1.0];
+  var eq   = 1.0;
+  for (var i = 0; i < n; i++) {
+    var r = gaussian(rng, muPct / 100, sigmaPct / 100);
+    eq *= (1 + r);
+    path.push(Math.max(eq, 0.01));
+  }
+  return path;
+}
+
+function tradeReturns(path) {
+  var r = [];
+  for (var i = 1; i < path.length; i++) {
+    r.push((path[i] - path[i - 1]) / path[i - 1]);
+  }
+  return r;
+}
+
+function mean(arr) {
+  var s = 0;
+  for (var i = 0; i < arr.length; i++) s += arr[i];
+  return s / arr.length;
+}
+
+function std(arr) {
+  var m = mean(arr);
+  var s = 0;
+  for (var i = 0; i < arr.length; i++) s += (arr[i] - m) * (arr[i] - m);
+  return Math.sqrt(s / arr.length);
+}
+
+function sharpeFromPath(path) {
+  var r = tradeReturns(path);
+  var s = std(r);
+  if (s < 1e-10) return 0;
+  return mean(r) / s;
+}
+
+/* ==========================================================================
+   Hero canvas: two equity curves, same mean, very different σ
+   ========================================================================== */
+
+(function () {
+  var canvas = document.getElementById('sharpeCurves');
+  if (!canvas) return;
+
+  var N     = 200;
+  /* Rough path: μ=0.12%, σ=2.1% → noisy */
+  var pathA = simulate(42,  0.12, 2.10, N);
+  /* Smooth path: μ=0.13%, σ=0.55% → steady climb */
+  var pathB = simulate(137, 0.13, 0.55, N);
+
+  var COLOR_A   = '#B0543A';
+  var COLOR_B   = '#2E7D52';
+  var FONT_SM   = '500 11px "Source Sans 3", system-ui, sans-serif';
+  var FONT_MONO = '500 12px "JetBrains Mono", monospace';
+  var FONT_TINY = '400 10px "Source Sans 3", system-ui, sans-serif';
+
+  var W, H, dpr, ctx;
+  var PAD_L = 8, PAD_R = 96, PAD_T = 20, PAD_B = 28;
+  var plotW, plotH, yMin, yMax;
+
+  function setup() {
+    var wrap = canvas.parentElement;
+    W = wrap.offsetWidth;
+    H = 230;
+    dpr = window.devicePixelRatio || 1;
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+    ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    plotW = W - PAD_L - PAD_R;
+    plotH = H - PAD_T - PAD_B;
+    var all = pathA.concat(pathB);
+    yMin = Math.min.apply(null, all) - 0.04;
+    yMax = Math.max.apply(null, all) + 0.06;
+  }
+
+  function xAt(i) { return PAD_L + (i / N) * plotW; }
+  function yAt(v) { return PAD_T + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+  function drawBaseline() {
+    var y = yAt(1.0);
+    ctx.beginPath();
+    ctx.moveTo(PAD_L, y);
+    ctx.lineTo(PAD_L + plotW, y);
+    ctx.strokeStyle = 'rgba(26,35,50,0.11)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(26,35,50,0.28)';
+    ctx.font = FONT_TINY;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('0%', 2, y);
+  }
+
+  function drawCurve(path, color, end, lw) {
+    if (end < 1) return;
+    ctx.beginPath();
+    ctx.moveTo(xAt(0), yAt(path[0]));
+    for (var i = 1; i <= end; i++) ctx.lineTo(xAt(i), yAt(path[i]));
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lw;
+    ctx.lineJoin = 'round';
+    ctx.lineCap  = 'round';
+    ctx.stroke();
+  }
+
+  function drawEndLabels(alpha) {
+    if (alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+
+    var xOff = xAt(N) + 6;
+
+    /* Path A label */
+    var yA  = yAt(pathA[N]);
+    var pA  = ((pathA[N] - 1) * 100).toFixed(1);
+    ctx.fillStyle = COLOR_A;
+    ctx.font = FONT_SM;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Sharpe ต่ำ', xOff, yA - 8);
+    ctx.font = FONT_TINY;
+    ctx.fillStyle = 'rgba(176,84,58,0.75)';
+    ctx.fillText((pA >= 0 ? '+' : '') + pA + '%', xOff, yA + 4);
+
+    /* Path B label */
+    var yB  = yAt(pathB[N]);
+    var pB  = ((pathB[N] - 1) * 100).toFixed(1);
+    ctx.fillStyle = COLOR_B;
+    ctx.font = FONT_SM;
+    ctx.fillText('Sharpe สูง', xOff, yB - 8);
+    ctx.font = FONT_TINY;
+    ctx.fillStyle = 'rgba(46,125,82,0.75)';
+    ctx.fillText('+' + pB + '%', xOff, yB + 4);
+
+    ctx.globalAlpha = 1;
+  }
+
+  var DRAW  = 160;
+  var HOLD  = 80;
+  var FADE  = 18;
+  var CYCLE = DRAW + HOLD + FADE;
+  var frame = 0;
+  var raf;
+
+  function tick() {
+    ctx.clearRect(0, 0, W, H);
+    drawBaseline();
+
+    var t = frame % CYCLE;
+    var progress, labelAlpha;
+    if (t < DRAW) {
+      progress   = t / DRAW;
+      labelAlpha = 0;
+    } else if (t < DRAW + HOLD) {
+      progress   = 1;
+      labelAlpha = Math.min((t - DRAW) / 12, 1);
+    } else {
+      progress   = 1;
+      labelAlpha = Math.max(1 - (t - DRAW - HOLD) / FADE, 0);
+    }
+
+    var drawn = Math.round(progress * N);
+    drawCurve(pathA, COLOR_A, drawn, 1.5);
+    drawCurve(pathB, COLOR_B, drawn, 2.0);
+    drawEndLabels(labelAlpha);
+
+    frame++;
+    raf = requestAnimationFrame(tick);
+  }
+
+  function init() {
+    setup();
+    if (raf) cancelAnimationFrame(raf);
+    tick();
+  }
+
+  init();
+
+  var resizeT;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(function () {
+      if (raf) cancelAnimationFrame(raf);
+      frame = 0;
+      init();
+    }, 120);
+  });
+
+  /* Reduced motion: static final frame */
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    cancelAnimationFrame(raf);
+    setup();
+    ctx.clearRect(0, 0, W, H);
+    drawBaseline();
+    drawCurve(pathA, COLOR_A, N, 1.5);
+    drawCurve(pathB, COLOR_B, N, 2.0);
+    drawEndLabels(1);
+  }
+}());
+
+/* ==========================================================================
+   Interactive Sharpe Lab
+   ========================================================================== */
+
+(function () {
+  var muSlider    = document.getElementById('muSlider');
+  var sigmaSlider = document.getElementById('sigmaSlider');
+  var muValEl     = document.getElementById('muVal');
+  var sigmaValEl  = document.getElementById('sigmaVal');
+  var sharpeNumEl = document.getElementById('labSharpeNum');
+  var verdictEl   = document.getElementById('labVerdict');
+  var canvas      = document.getElementById('labCurve');
+  var needleEl    = document.getElementById('labNeedle');
+
+  if (!canvas || !muSlider) return;
+
+  var ctx2, W2, H2, dpr2;
+
+  function setupLab() {
+    W2  = canvas.parentElement.offsetWidth;
+    H2  = 130;
+    dpr2 = window.devicePixelRatio || 1;
+    canvas.style.width  = W2 + 'px';
+    canvas.style.height = H2 + 'px';
+    canvas.width  = W2 * dpr2;
+    canvas.height = H2 * dpr2;
+    ctx2 = canvas.getContext('2d');
+    ctx2.scale(dpr2, dpr2);
+  }
+
+  function drawLabCurve(muPct, sigmaPct) {
+    var path  = simulate(77, muPct, sigmaPct, 120);
+    var PAD_L = 4, PAD_R = 4, PAD_T = 10, PAD_B = 14;
+    var pW    = W2 - PAD_L - PAD_R;
+    var pH    = H2 - PAD_T - PAD_B;
+    var N2    = path.length - 1;
+
+    var yMin2 = Math.min.apply(null, path) - 0.02;
+    var yMax2 = Math.max.apply(null, path) + 0.02;
+
+    function x2(i) { return PAD_L + (i / N2) * pW; }
+    function y2(v) { return PAD_T + (1 - (v - yMin2) / (yMax2 - yMin2)) * pH; }
+
+    ctx2.clearRect(0, 0, W2, H2);
+
+    /* baseline */
+    var yBase = y2(1.0);
+    ctx2.beginPath();
+    ctx2.moveTo(PAD_L, yBase);
+    ctx2.lineTo(PAD_L + pW, yBase);
+    ctx2.strokeStyle = 'rgba(26,35,50,0.10)';
+    ctx2.lineWidth = 1;
+    ctx2.setLineDash([3, 4]);
+    ctx2.stroke();
+    ctx2.setLineDash([]);
+
+    /* equity curve */
+    var finalEq = path[path.length - 1];
+    var color   = finalEq >= 1.0 ? '#2E7D52' : '#C0392B';
+    ctx2.beginPath();
+    ctx2.moveTo(x2(0), y2(path[0]));
+    for (var i = 1; i <= N2; i++) ctx2.lineTo(x2(i), y2(path[i]));
+    ctx2.strokeStyle = color;
+    ctx2.lineWidth = 1.75;
+    ctx2.lineJoin = 'round';
+    ctx2.lineCap  = 'round';
+    ctx2.stroke();
+
+    /* final pct label */
+    var pct = ((finalEq - 1) * 100).toFixed(1);
+    ctx2.fillStyle = color;
+    ctx2.font = '500 10px "JetBrains Mono", monospace';
+    ctx2.textAlign = 'right';
+    ctx2.textBaseline = 'middle';
+    ctx2.fillText((finalEq >= 1 ? '+' : '') + pct + '%', PAD_L + pW - 2, y2(finalEq) - 8);
+  }
+
+  var VERDICT_MAP = [
+    [0.50, 'ต่ำมาก — return ไม่คุ้มความผันผวน', '#C0392B'],
+    [0.80, 'ต่ำ — ต้องการ edge ที่แข็งแกร่งกว่า', '#E67E22'],
+    [1.10, 'ปานกลาง — ยอมรับได้ในบางกรณี',       '#C9A348'],
+    [1.50, 'ดี — edge แข็งแกร่ง',                '#27AE60'],
+    [9999, 'ยอดเยี่ยม — หรือ overfit? ตรวจสอบด้วย', '#2E7D52'],
+  ];
+
+  /* Sharpe needle: 0 maps to 0%, 2.0 maps to 100% on scale */
+  function sharpeToNeedlePct(s) {
+    var MAX_S = 2.0;
+    return Math.min(Math.max(s / MAX_S, 0), 1) * 100;
+  }
+
+  function update() {
+    var muPct    = parseInt(muSlider.value, 10)    / 100;     /* e.g. 20 → 0.20% */
+    var sigmaPct = parseInt(sigmaSlider.value, 10) / 100;     /* e.g. 120 → 1.20% */
+
+    muValEl.textContent    = (muPct).toFixed(2) + '%';
+    sigmaValEl.textContent = (sigmaPct).toFixed(2) + '%';
+
+    var s = sigmaPct > 0 ? (muPct / sigmaPct) : 0;
+    sharpeNumEl.textContent = s.toFixed(2);
+
+    /* Colour + verdict */
+    var found = VERDICT_MAP[VERDICT_MAP.length - 1];
+    for (var i = 0; i < VERDICT_MAP.length; i++) {
+      if (s < VERDICT_MAP[i][0]) { found = VERDICT_MAP[i]; break; }
+    }
+    sharpeNumEl.style.color = found[2];
+    verdictEl.textContent   = found[1];
+
+    /* Needle */
+    needleEl.style.left = sharpeToNeedlePct(s) + '%';
+
+    drawLabCurve(muPct, sigmaPct);
+  }
+
+  setupLab();
+  update();
+
+  muSlider.addEventListener('input', update);
+  sigmaSlider.addEventListener('input', update);
+
+  var resizeT2;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeT2);
+    resizeT2 = setTimeout(function () { setupLab(); update(); }, 120);
+  });
+}());
+
+/* ==========================================================================
+   Quiz interactivity
+   ========================================================================== */
+
+document.querySelectorAll('.quiz-card').forEach(function (card) {
+  var correct = card.dataset.correct;
+  var btn     = card.querySelector('.reveal-btn');
+  var reveal  = card.querySelector('.quiz-reveal');
+  var inputs  = card.querySelectorAll('.option input[type="radio"]');
+
+  btn.addEventListener('click', function () {
+    reveal.hidden = false;
+    inputs.forEach(function (inp) {
+      inp.disabled = true;
+      var label = inp.closest('.option');
+      if (inp.value === correct) {
+        label.classList.add('correct');
+      } else if (inp.checked) {
+        label.classList.add('wrong');
+      }
+    });
+    btn.textContent = 'เฉลยแล้ว';
+    btn.disabled = true;
+  });
+});
+</script>
+</body>
+</html>
