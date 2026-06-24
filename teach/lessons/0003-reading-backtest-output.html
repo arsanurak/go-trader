@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บทเรียนที่ 03 — อ่าน Backtest Output: Sharpe + Drawdown + จำนวนการเทรด</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-03 additions ── */
+
+    /* Scorecard grid */
+    .scorecard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+
+    .sc-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1.125rem 1.25rem;
+      transition: border-color 0.15s;
+    }
+
+    .sc-card.judged-real    { border-color: rgba(46,125,82,0.55);  background: rgba(46,125,82,0.06); }
+    .sc-card.judged-suspect { border-color: rgba(201,163,72,0.55); background: rgba(201,163,72,0.07); }
+    .sc-card.judged-low-n   { border-color: rgba(61,107,142,0.45); background: rgba(61,107,142,0.06); }
+    .sc-card.judged-wrong   { border-color: rgba(192,57,43,0.45);  background: rgba(192,57,43,0.06); }
+
+    .sc-name {
+      font-size: var(--xs);
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 0.875rem;
+    }
+
+    .sc-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .sc-stat {
+      background: var(--ground);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.5rem 0.5rem 0.375rem;
+      text-align: center;
+    }
+
+    .sc-stat-label {
+      display: block;
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      margin-bottom: 0.2rem;
+    }
+
+    .sc-stat-val {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: var(--sm);
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .sc-stat-val.good   { color: var(--positive); }
+    .sc-stat-val.warn   { color: var(--accent); }
+    .sc-stat-val.danger { color: var(--negative); }
+
+    .sc-verdict-btns {
+      display: flex;
+      gap: 0.375rem;
+      flex-wrap: wrap;
+    }
+
+    .sc-btn {
+      flex: 1;
+      min-width: 0;
+      padding: 0.375rem 0.25rem;
+      font-family: var(--font-body);
+      font-size: 0.72rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      cursor: pointer;
+      background: var(--ground);
+      color: var(--text-muted);
+      transition: background-color 0.1s, border-color 0.1s, color 0.1s;
+      white-space: nowrap;
+    }
+
+    .sc-btn:hover:not(:disabled)           { background: var(--surface-2); color: var(--text); }
+    .sc-btn.selected-real                  { background: rgba(46,125,82,0.15);  border-color: rgba(46,125,82,0.5);  color: #1D5235; }
+    .sc-btn.selected-suspect               { background: rgba(201,163,72,0.15); border-color: rgba(201,163,72,0.5); color: #7A5F1A; }
+    .sc-btn.selected-low-n                 { background: rgba(61,107,142,0.15); border-color: rgba(61,107,142,0.5); color: #2D5573; }
+    .sc-btn:disabled                       { cursor: default; }
+
+    .sc-feedback {
+      margin-top: 0.75rem;
+      padding: 0.625rem 0.875rem;
+      border-radius: 3px;
+      font-size: var(--sm);
+      line-height: 1.55;
+    }
+
+    .sc-feedback.correct {
+      background: rgba(46,125,82,0.09);
+      border: 1px solid rgba(46,125,82,0.25);
+      color: #1D5235;
+    }
+
+    .sc-feedback.wrong {
+      background: rgba(192,57,43,0.07);
+      border: 1px solid rgba(192,57,43,0.22);
+      color: #7A1D14;
+    }
+
+    /* Three-pillar summary */
+    .pillar-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+
+    @media (max-width: 520px) {
+      .pillar-row { grid-template-columns: 1fr; }
+    }
+
+    .pillar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1rem;
+    }
+
+    .pillar-icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.375rem;
+      display: block;
+    }
+
+    .pillar-title {
+      font-family: var(--font-mono);
+      font-size: var(--sm);
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 0.25rem;
+    }
+
+    .pillar-desc {
+      font-size: var(--xs);
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    /* Threshold row */
+    .threshold-row {
+      display: grid;
+      grid-template-columns: auto 1fr 1fr 1fr;
+      gap: 0;
+      margin: 1.25rem 0;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      font-size: var(--sm);
+    }
+
+    .threshold-row > div {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .threshold-row > div:last-child,
+    .threshold-row > div:nth-last-child(-n+4) { /* last row */ }
+
+    .th-header {
+      background: var(--surface);
+      font-size: var(--xs);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .th-label {
+      font-weight: 600;
+      color: var(--text);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+    }
+
+    .th-good   { color: var(--positive); font-family: var(--font-mono); font-size: var(--xs); }
+    .th-warn   { color: var(--accent);   font-family: var(--font-mono); font-size: var(--xs); }
+    .th-danger { color: var(--negative); font-family: var(--font-mono); font-size: var(--xs); }
+
+    /* go-trader output example */
+    .discord-output {
+      background: #23272A;
+      color: #DCDDDE;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      line-height: 1.7;
+      padding: 1rem 1.25rem;
+      border-radius: 3px;
+      margin: 1rem 0;
+      overflow-x: auto;
+    }
+
+    .discord-output .header { color: #FFF; font-weight: 500; }
+    .discord-output .pos    { color: #43B581; }
+    .discord-output .col    { color: #7289DA; }
+    .discord-output .dim    { color: #72767D; }
+  </style>
+</head>
+<body>
+<div class="lesson-wrap">
+
+  <!-- ─── Header ─────────────────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">
+      <span class="course-label">การเทรดเชิงปริมาณ</span>
+      <span class="lesson-label">บทเรียนที่ 03</span>
+    </div>
+    <h1 class="lesson-title">อ่าน Backtest Output: Sharpe + Drawdown + N</h1>
+    <p class="lesson-thesis">
+      Sharpe ratio เพียงตัวเดียวบอกไม่ครบ
+      กลยุทธ์ที่ดีต้องผ่านทั้งสามคำถาม:
+      <em>edge มีคุณภาพแค่ไหน, ความเสี่ยงสูงสุดที่ต้องแบกรับคือเท่าใด,
+      และข้อมูลมีมากพอที่จะเชื่อได้หรือยัง?</em>
+    </p>
+  </header>
+
+  <!-- ─── Objectives ─────────────────────────────────────────────────────── -->
+  <section class="objectives">
+    <h2>หลังจากจบบทเรียนนี้ คุณจะสามารถ</h2>
+    <ol>
+      <li>อธิบาย Max Drawdown ได้ และบอกว่าทำไมมันถึงสำคัญกว่า return รวม</li>
+      <li>บอกได้ว่าต้องการการเทรดกี่ครั้งจึงจะ "เชื่อ" Sharpe ที่เห็นใน backtest ได้</li>
+      <li>อ่าน Discord summary ของ go-trader และตัดสินได้ว่ากลยุทธ์ควรได้รับทุนเพิ่มหรือไม่</li>
+    </ol>
+  </section>
+
+  <!-- ─── Section 1: สามเสาหลัก ─────────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>สามเสาหลักของ Backtest</h2>
+
+    <p>
+      นักเทรดที่ไม่มีประสบการณ์มักดูแค่ return รวม นักเทรดที่เรียนรู้บทที่แล้วดู Sharpe
+      แต่นักเทรดที่อ่าน backtest จริงๆ ดูทั้งสามตัวพร้อมกัน:
+    </p>
+
+    <div class="pillar-row">
+      <div class="pillar">
+        <span class="pillar-icon">📐</span>
+        <div class="pillar-title">Sharpe Ratio</div>
+        <p class="pillar-desc">คุณภาพของ edge — return ต่อหน่วยความผันผวน
+          ถามว่า: <strong>edge มีจริงและสม่ำเสมอแค่ไหน?</strong></p>
+      </div>
+      <div class="pillar">
+        <span class="pillar-icon">📉</span>
+        <div class="pillar-title">Max Drawdown</div>
+        <p class="pillar-desc">การขาดทุนสูงสุดจาก peak ถึง trough
+          ถามว่า: <strong>ในช่วงที่แย่ที่สุด คุณจะทนได้ไหม?</strong></p>
+      </div>
+      <div class="pillar">
+        <span class="pillar-icon">🔢</span>
+        <div class="pillar-title">N trades</div>
+        <p class="pillar-desc">จำนวนการเทรดใน backtest
+          ถามว่า: <strong>ข้อมูลมีมากพอที่ตัวเลขจะมีความหมายหรือไม่?</strong></p>
+      </div>
+    </div>
+
+    <div class="key-insight">
+      <span class="key-insight-label">กฎหลัก</span>
+      <p style="margin-bottom:0;">
+        กลยุทธ์ผ่านก็ต่อเมื่อผ่านทั้งสาม
+        ถ้าตัวใดตัวหนึ่งล้มเหลว — Sharpe ต่ำ, Drawdown สูงเกินไป, หรือ N น้อยเกินไป —
+        กลยุทธ์นั้นยังไม่พร้อมสำหรับเงินจริง
+      </p>
+    </div>
+  </section>
+
+  <!-- ─── Section 2: Max Drawdown ──────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>Max Drawdown คืออะไร</h2>
+
+    <p>
+      Max Drawdown (DD) คือเปอร์เซ็นต์การลดลงสูงสุดจากจุดสูงสุดไปยังจุดต่ำสุด
+      ก่อนที่จะมี high ใหม่ในระหว่าง backtest
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">ตัวอย่าง</span>
+      <p>
+        พอร์ตเริ่มต้นที่ $10,000 → ขึ้นไปที่ $13,000 (peak) →
+        ลงมาที่ $8,500 (trough) → กลับขึ้นไปใหม่
+      </p>
+      <div class="formula" style="font-size:var(--base);">
+        Max DD = (13,000 − 8,500) / 13,000 = 34.6%
+      </div>
+      <p style="margin-bottom:0; font-size:var(--sm); color:var(--text-muted);">
+        ณ จุดที่แย่ที่สุด คุณต้องดูพอร์ตหายไป 34.6% ก่อนจะกลับมา
+        ถ้าคุณไม่ทนหรือตื่นตกใจและขาย — คุณจะไม่ได้ return ที่ backtest สัญญาไว้
+      </p>
+    </div>
+
+    <h3>ทำไม Drawdown ถึงสำคัญกว่า Return</h3>
+
+    <p>
+      เหตุผลเชิงจิตวิทยา: drawdown ที่ลึกทำให้ผู้ดำเนินการหยุดกลยุทธ์กลางคัน
+      <strong>ก่อนที่ edge จะแสดงผล</strong> — เป็นสาเหตุที่พบบ่อยที่สุดที่นักเทรด
+      ได้ผลลัพธ์แย่กว่า backtest จริงๆ ไม่ใช่เพราะกลยุทธ์ผิด
+      แต่เพราะทนดู drawdown ไม่ได้
+    </p>
+
+    <p>
+      เหตุผลเชิงคณิตศาสตร์: drawdown สูงหมายถึง Sharpe ต่ำ (ความผันผวนสูง)
+      แต่บางกลยุทธ์มี Sharpe ที่ดูดี แต่มี drawdown สูงผิดปกติ —
+      นั่นคือสัญญาณว่ามีความเสี่ยงที่ Sharpe ไม่ได้จับ
+    </p>
+
+    <div class="threshold-row">
+      <div class="th-header">ช่วง Max DD</div>
+      <div class="th-header">ความหมาย</div>
+      <div class="th-header">จิตวิทยา</div>
+      <div class="th-header">การตัดสิน</div>
+
+      <div class="th-label">< 10%</div>
+      <div>ผันผวนต่ำมาก — edge สม่ำเสมอ</div>
+      <div>ทนได้สบาย</div>
+      <div class="th-good">ดีมาก</div>
+
+      <div class="th-label">10 – 20%</div>
+      <div>ปกติสำหรับกลยุทธ์ systematic</div>
+      <div>ทนได้ถ้ามีวินัย</div>
+      <div class="th-good">ยอมรับได้</div>
+
+      <div class="th-label">20 – 35%</div>
+      <div>สูง — ต้องการ position size เล็ก</div>
+      <div>ยากที่จะทน — เสี่ยงหยุดกลางคัน</div>
+      <div class="th-warn">ระวัง</div>
+
+      <div class="th-label">> 35%</div>
+      <div>สูงมาก — ความเสี่ยงเกินไปสำหรับส่วนใหญ่</div>
+      <div>ผู้ดำเนินการส่วนใหญ่จะหยุดกลยุทธ์</div>
+      <div class="th-danger">ปฏิเสธ</div>
+    </div>
+  </section>
+
+  <!-- ─── Section 3: N trades ───────────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>N trades — ข้อมูลมีพอหรือยัง?</h2>
+
+    <p>
+      สมมติว่ากลยุทธ์หนึ่งมี Sharpe 1.5 และ Max DD 8%
+      ฟังดูยอดเยี่ยม — แต่ถ้า backtest นั้นมีเพียง <strong>5 การเทรด?</strong>
+    </p>
+
+    <p>
+      5 การเทรด ชนะ 4 ครั้ง Sharpe 1.5 นั้น <strong>อาจเกิดจากโชคล้วนๆ</strong>
+      ถ้าโยนเหรียญ 5 ครั้งและได้หัว 4 ครั้ง คุณจะบอกว่าเหรียญนั้น "มี edge" ไหม?
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">หลักทั่วไปด้านสถิติ</span>
+      <p><strong>ขั้นต่ำ 30 การเทรด</strong> — เพื่อให้ค่าเฉลี่ยและ std dev มีความเสถียรตามกฎจำนวนมาก (Law of Large Numbers)</p>
+      <p style="margin-bottom:0;"><strong>50+ การเทรดขึ้นไป</strong> — เพื่อให้ Sharpe ที่คำนวณได้มีความน่าเชื่อถือพอที่จะตัดสินใจลงทุนจริง
+        กลยุทธ์ที่เทรดบ่อย (รายชั่วโมง รายวัน) จะถึงจุดนี้เร็วกว่ากลยุทธ์ที่เทรดน้อย</p>
+    </div>
+
+    <h3>hl-squeeze_momentum ของเราตอนนี้</h3>
+
+    <p>
+      จากสรุป Discord ที่เห็น: <code>#T = 3</code> — มีเพียง 3 การเทรดใน 1 เดือน
+      W/L = 2.00 (ชนะ 2 แพ้ 1) นั้น <strong>ไม่สามารถสรุปได้ทางสถิติ</strong>
+      ว่ากลยุทธ์มี edge จริง ต้องการอีกอย่างน้อย 47 การเทรดก่อนที่ตัวเลขนี้จะมีความหมาย
+    </p>
+
+    <p>
+      นั่นคือ <strong>เหตุผลสำคัญที่สุด</strong> ที่ไม่ควรเพิ่มทุนในตอนนี้ —
+      ไม่ใช่เพราะกลยุทธ์ไม่ดี แต่เพราะข้อมูลยังน้อยเกินไปที่จะรู้
+    </p>
+  </section>
+
+  <!-- ─── Section 4: go-trader output ──────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>อ่าน Discord Summary ของ go-trader</h2>
+
+    <p>
+      go-trader รายงานทั้งสามตัวชี้วัดในสรุป Discord ที่คุณเห็นทุกชั่วโมง
+      ดูได้จากคอลัมน์เหล่านี้:
+    </p>
+
+    <div class="discord-output">
+      <div class="header">⚡ Hyperliquid Summary (dev pid:4529)</div>
+      <div class="dim">Cycle #317 | 3.4s</div>
+      <br>
+      <div class="col">Strategy               Init  Value    PnL     PnL%   DD    Tf  Int   #T   W/L</div>
+      <div class="dim">-------------------------------------------------------------------</div>
+      <div class="pos">hl-squeeze_momentu       48     49     +0    +1.4%  20%    1h   1h    3  2.00</div>
+      <div class="dim">-------------------------------------------------------------------</div>
+      <div>TOTAL                    48     49     +0    +1.4%                    3  2.00</div>
+    </div>
+
+    <div class="codebase-callout">
+      <h3>อ่านสรุป Discord อย่างไร</h3>
+      <p>
+        <strong>PnL%</strong> — return รวมตั้งแต่ start เทียบกับ Init capital
+        <code>+1.4%</code> หมายถึงพอร์ตเพิ่มขึ้น 1.4% จากทุนตั้งต้น
+      </p>
+      <p>
+        <strong>DD</strong> — Max Drawdown ปัจจุบัน <code>20%</code> หมายถึงในช่วงนี้
+        พอร์ตเคยลงจากจุดสูงสุด 20% ก่อนจะกลับขึ้น — อยู่ในช่วง "ระวัง" จากตารางด้านบน
+      </p>
+      <p>
+        <strong>#T</strong> — จำนวนการเทรดทั้งหมด <code>3</code> — น้อยมาก
+        ยังไม่สามารถสรุปได้ทางสถิติ
+      </p>
+      <p>
+        <strong>Book Sharpe</strong> — แสดงใน footer ของสรุปแบบเต็ม
+        (ดูได้จาก <code>localhost:8099/dashboard</code> → Reports)
+        นี่คือ Sharpe แบบ running จากการเทรดจริงทั้งหมดที่ผ่านมา
+      </p>
+    </div>
+  </section>
+
+  <!-- ─── Section 5: Backtest Judge ────────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>ฝึกตัดสิน: Backtest Judge</h2>
+
+    <p>
+      ดู backtest ต่อไปนี้และตัดสินแต่ละตัว:
+      <strong>Edge จริง</strong> (ผ่านทั้งสาม),
+      <strong>น่าสงสัย</strong> (Sharpe ดูดีเกินจริงหรือ DD สูงผิดปกติ), หรือ
+      <strong>ข้อมูลน้อยเกินไป</strong> (N ต่ำกว่า 30)
+    </p>
+
+    <div class="scorecard-grid" id="scorecardGrid"></div>
+
+    <div id="scorecardScore" style="display:none; margin-top:1rem; padding:0.875rem 1.25rem; background:var(--signal-light); border:1px solid var(--signal-border); border-radius:3px; font-size:var(--sm); color:var(--text);">
+    </div>
+  </section>
+
+  <!-- ─── Quiz ──────────────────────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>ทดสอบความเข้าใจ</h2>
+
+    <div class="quiz-card" data-correct="c">
+      <p class="question">
+        1. กลยุทธ์มี Sharpe 1.8, Max DD 7%, แต่มีเพียง 12 การเทรด
+        ควรตัดสินอย่างไร?
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q1" value="a"> Edge จริง — Sharpe สูงและ DD ต่ำมากพิสูจน์คุณภาพ</label>
+        <label class="option"><input type="radio" name="q1" value="b"> น่าสงสัย — Sharpe 1.8 สูงเกินจริงสำหรับกลยุทธ์ crypto</label>
+        <label class="option"><input type="radio" name="q1" value="c"> ข้อมูลน้อยเกินไป — 12 การเทรดไม่เพียงพอ ตัวเลขอาจเป็นโชค</label>
+        <label class="option"><input type="radio" name="q1" value="d"> ปฏิเสธ — DD ต่ำกว่า 10% แปลว่ากลยุทธ์ไม่ได้เทรดจริง</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: ข้อมูลน้อยเกินไป — 12 การเทรดไม่เพียงพอ ตัวเลขอาจเป็นโชค</p>
+        <p class="explanation">
+          ไม่ว่า Sharpe และ DD จะดูดีแค่ไหน 12 การเทรดไม่เพียงพอทางสถิติ
+          ด้วยจำนวนน้อยขนาดนี้ ผลลัพธ์ที่ดีอาจเกิดจากโชคล้วนๆ
+          ต้องรอให้ถึง 30–50 การเทรดก่อนจะตีความตัวเลขได้
+        </p>
+      </div>
+    </div>
+
+    <div class="quiz-card" data-correct="b">
+      <p class="question">
+        2. กลยุทธ์มี Sharpe 0.7, Max DD 12%, และ 85 การเทรด
+        HL-squeeze_momentum ของคุณมี 3 การเทรดและ DD 20%
+        กลยุทธ์ไหนพร้อมรับทุนเพิ่มกว่ากัน และเพราะอะไร?
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q2" value="a"> HL-squeeze — PnL% สูงกว่าและ W/L ดีกว่า</label>
+        <label class="option"><input type="radio" name="q2" value="b"> กลยุทธ์แรก — N สูงกว่าทำให้ตัวเลขน่าเชื่อถือกว่า</label>
+        <label class="option"><input type="radio" name="q2" value="c"> เท่ากัน — Sharpe 0.7 กับ Sharpe ที่ไม่รู้ค่าเปรียบกันไม่ได้</label>
+        <label class="option"><input type="radio" name="q2" value="d"> กลยุทธ์แรก — DD 12% ดีกว่า DD 20% เสมอ</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: กลยุทธ์แรก — N สูงกว่าทำให้ตัวเลขน่าเชื่อถือกว่า</p>
+        <p class="explanation">
+          กลยุทธ์แรกมี 85 การเทรด — เกินเกณฑ์ขั้นต่ำ ตัวเลขน่าเชื่อถือ
+          Sharpe 0.7 อยู่ในระดับ "ยอมรับได้" และ DD 12% อยู่ในช่วงปกติ
+          HL-squeeze มีเพียง 3 การเทรด — ไม่สามารถสรุปอะไรได้ทางสถิติ
+          W/L 2.00 จาก 3 การเทรดไม่มีนัยสำคัญทางสถิติแต่อย่างใด
+        </p>
+      </div>
+    </div>
+
+    <div class="quiz-card" data-correct="d">
+      <p class="question">
+        3. backtest แสดงผล Sharpe 3.2, Max DD 3%, 200 การเทรด
+        คุณควรทำอะไรก่อน?
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q3" value="a"> เพิ่มทุนทันที — ทั้งสามตัวชี้วัดผ่านเกณฑ์ทุกข้อ</label>
+        <label class="option"><input type="radio" name="q3" value="b"> รอให้ครบ 500 การเทรดก่อน — N ยังไม่พอ</label>
+        <label class="option"><input type="radio" name="q3" value="c"> ตรวจสอบ DD — 3% ต่ำเกินไปสำหรับกลยุทธ์ที่ดี</label>
+        <label class="option"><input type="radio" name="q3" value="d"> ตรวจสอบ overfitting — Sharpe 3.2 สูงผิดปกติ</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: ตรวจสอบ overfitting — Sharpe 3.2 สูงผิดปกติ</p>
+        <p class="explanation">
+          กลยุทธ์ที่มี Sharpe สูงกว่า 2.0 ใน backtest ควรตั้งคำถามก่อนเสมอ
+          Sharpe 3.2 หมายถึง return สูงมากเมื่อเทียบกับความผันผวน —
+          ในตลาดจริงนั้นหายาก ตัวเลขนี้มักเกิดจาก overfitting:
+          กลยุทธ์ถูก "จูน" กับข้อมูลอดีตจนเกินไป และจะทำงานแย่กว่านี้มากใน out-of-sample
+          บทเรียนถัดไปจะกล่าวถึง overfitting โดยเฉพาะ
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Primary source ──────────────────────────────────────────────────── -->
+  <section class="primary-source">
+    <h2>แหล่งข้อมูลหลัก</h2>
+    <p>
+      <strong>Quantitative Trading</strong> — Ernest P. Chan บทที่ 3–4
+      อธิบาย Max Drawdown, Calmar Ratio (return/MaxDD), และวิธีใช้ทั้งสองร่วมกับ Sharpe
+      เพื่อประเมินกลยุทธ์อย่างครบถ้วน Chan ยังแนะนำว่าเหตุใด N trades ถึงเป็นข้อกำหนดเบื้องต้น
+      ก่อนจะตีความตัวชี้วัดอื่น
+    </p>
+    <p>
+      อ่านต่อ: บทที่ 5 "Execution Systems" — เพราะแม้ backtest จะดีแค่ไหน
+      ถ้า execution มีปัญหา ผลลัพธ์จริงจะต่างกันมาก
+    </p>
+  </section>
+
+  <!-- ─── Footer nav ──────────────────────────────────────────────────────── -->
+  <nav class="lesson-nav">
+    <div class="ask-teacher">
+      <p>มีคำถามเกี่ยวกับ Max Drawdown, N trades, หรือ backtest output ที่เห็นใน go-trader —
+        ถามในบทสนทนาได้เลย</p>
+    </div>
+    <div class="nav-next" style="display:flex; gap:1rem; flex-direction:column; align-items:flex-end;">
+      <a href="0004-overfitting.html">บทถัดไป: Overfitting →</a>
+      <a href="0002-sharpe-ratio.html">← ย้อนกลับ: Sharpe Ratio</a>
+    </div>
+  </nav>
+
+</div><!-- .lesson-wrap -->
+
+<script>
+/* ==========================================================================
+   Quiz interactivity
+   ========================================================================== */
+document.querySelectorAll('.quiz-card').forEach(function (card) {
+  var correct = card.dataset.correct;
+  var btn     = card.querySelector('.reveal-btn');
+  var reveal  = card.querySelector('.quiz-reveal');
+  var inputs  = card.querySelectorAll('.option input[type="radio"]');
+
+  btn.addEventListener('click', function () {
+    reveal.hidden = false;
+    inputs.forEach(function (inp) {
+      inp.disabled = true;
+      var label = inp.closest('.option');
+      if (inp.value === correct)      { label.classList.add('correct'); }
+      else if (inp.checked)           { label.classList.add('wrong'); }
+    });
+    btn.textContent = 'เฉลยแล้ว';
+    btn.disabled = true;
+  });
+});
+
+/* ==========================================================================
+   Backtest Judge
+   ========================================================================== */
+(function () {
+  var CASES = [
+    {
+      name:    'กลยุทธ์ Alpha',
+      sharpe:  '1.12',
+      dd:      '14%',
+      n:       '67',
+      sClass:  'good',
+      ddClass: 'good',
+      nClass:  'good',
+      correct: 'real',
+      why: 'Sharpe ดี, DD อยู่ในเกณฑ์ปกติ, N มากพอ — ผ่านทั้งสาม'
+    },
+    {
+      name:    'กลยุทธ์ Beta',
+      sharpe:  '2.91',
+      dd:      '2%',
+      n:       '112',
+      sClass:  'warn',
+      ddClass: 'good',
+      nClass:  'good',
+      correct: 'suspect',
+      why: 'Sharpe 2.91 และ DD 2% สูง/ต่ำผิดปกติมาก — น่าจะ overfit กับข้อมูลอดีต'
+    },
+    {
+      name:    'กลยุทธ์ Gamma',
+      sharpe:  '0.88',
+      dd:      '18%',
+      n:       '8',
+      sClass:  'warn',
+      ddClass: 'warn',
+      nClass:  'danger',
+      correct: 'low-n',
+      why: 'N = 8 ต่ำมาก ไม่มีนัยสำคัญทางสถิติ ไม่ว่า Sharpe จะดีแค่ไหนก็ตาม'
+    },
+    {
+      name:    'กลยุทธ์ Delta',
+      sharpe:  '0.62',
+      dd:      '41%',
+      n:       '93',
+      sClass:  'warn',
+      ddClass: 'danger',
+      nClass:  'good',
+      correct: 'suspect',
+      why: 'DD 41% สูงเกินไป — ผู้ดำเนินการส่วนใหญ่จะหยุดกลยุทธ์ระหว่าง drawdown ก่อนที่ edge จะแสดงผล'
+    },
+    {
+      name:    'hl-squeeze_momentum',
+      sharpe:  '—',
+      dd:      '20%',
+      n:       '3',
+      sClass:  '',
+      ddClass: 'warn',
+      nClass:  'danger',
+      correct: 'low-n',
+      why: 'N = 3 น้อยมาก ยังไม่รู้ว่า edge มีจริงหรือเปล่า ต้องรอให้ถึง 30–50 การเทรด'
+    }
+  ];
+
+  var grid  = document.getElementById('scorecardGrid');
+  var score = document.getElementById('scorecardScore');
+  var answered = 0;
+  var correct  = 0;
+
+  CASES.forEach(function (c, idx) {
+    var card = document.createElement('div');
+    card.className = 'sc-card';
+
+    card.innerHTML =
+      '<div class="sc-name">' + c.name + '</div>' +
+      '<div class="sc-stats">' +
+        '<div class="sc-stat">' +
+          '<span class="sc-stat-label">Sharpe</span>' +
+          '<span class="sc-stat-val ' + c.sClass + '">' + c.sharpe + '</span>' +
+        '</div>' +
+        '<div class="sc-stat">' +
+          '<span class="sc-stat-label">Max DD</span>' +
+          '<span class="sc-stat-val ' + c.ddClass + '">' + c.dd + '</span>' +
+        '</div>' +
+        '<div class="sc-stat">' +
+          '<span class="sc-stat-label">N trades</span>' +
+          '<span class="sc-stat-val ' + c.nClass + '">' + c.n + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="sc-verdict-btns">' +
+        '<button class="sc-btn" data-verdict="real">Edge จริง</button>' +
+        '<button class="sc-btn" data-verdict="suspect">น่าสงสัย</button>' +
+        '<button class="sc-btn" data-verdict="low-n">N น้อยเกิน</button>' +
+      '</div>';
+
+    var btns = card.querySelectorAll('.sc-btn');
+    btns.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var verdict  = btn.dataset.verdict;
+        var isRight  = verdict === c.correct;
+        answered++;
+        if (isRight) correct++;
+
+        btns.forEach(function (b) { b.disabled = true; });
+
+        var selClass = 'selected-' + verdict;
+        btn.classList.add(selClass);
+
+        if (isRight) {
+          card.classList.add('judged-real');
+        } else {
+          card.classList.add('judged-wrong');
+          /* show correct */
+          btns.forEach(function (b) {
+            if (b.dataset.verdict === c.correct) b.classList.add('selected-' + c.correct);
+          });
+        }
+
+        var fb = document.createElement('div');
+        fb.className = 'sc-feedback ' + (isRight ? 'correct' : 'wrong');
+        fb.textContent = (isRight ? '✓ ' : '✗ ') + c.why;
+        card.appendChild(fb);
+
+        if (answered === CASES.length) {
+          score.style.display = 'block';
+          score.textContent = 'คะแนน: ' + correct + '/' + CASES.length +
+            (correct === CASES.length
+              ? ' — ยอดเยี่ยม! คุณอ่าน backtest output ได้แล้ว'
+              : ' — ทบทวนกรณีที่ผิด แล้วกลับมาลองใหม่');
+        }
+      });
+    });
+
+    grid.appendChild(card);
+  });
+}());
+</script>
+</body>
+</html>

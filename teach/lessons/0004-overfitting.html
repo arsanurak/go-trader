@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บทเรียนที่ 04 — Overfitting และ Walk-Forward Test</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-04 additions ── */
+
+    /* Fold table */
+    .fold-table-wrap { overflow-x: auto; margin: 1.25rem 0; }
+
+    .fold-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--sm);
+    }
+
+    .fold-table th {
+      text-align: left;
+      font-weight: 600;
+      color: var(--text-muted);
+      padding: 0.375rem 0.75rem;
+      border-bottom: 2px solid var(--border);
+      font-size: var(--xs);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .fold-table td {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    .fold-table tr.fold-danger { background: rgba(192,57,43,0.06); }
+    .fold-table tr.fold-good   { background: rgba(46,125,82,0.04); }
+    .fold-table tr:last-child td { border-bottom: none; }
+
+    .fold-table .mono { font-family: var(--font-mono); font-size: var(--xs); }
+    .fold-table .pos  { color: var(--positive); font-weight: 600; font-family: var(--font-mono); font-size: var(--xs); }
+    .fold-table .neg  { color: var(--negative); font-weight: 600; font-family: var(--font-mono); font-size: var(--xs); }
+    .fold-table .warn { color: var(--accent);   font-weight: 600; font-family: var(--font-mono); font-size: var(--xs); }
+
+    /* Verdict badge */
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+    .badge-pass    { background: rgba(46,125,82,0.12);  color: #1D5235; }
+    .badge-fail    { background: rgba(192,57,43,0.12);  color: #7A1D14; }
+    .badge-warning { background: rgba(201,163,72,0.15); color: #7A5F1A; }
+
+    /* Train/test diagram */
+    .wf-diagram {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin: 1.5rem 0;
+      font-size: var(--sm);
+    }
+
+    .wf-row {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    .wf-label {
+      width: 3.5rem;
+      font-size: var(--xs);
+      font-weight: 600;
+      color: var(--text-muted);
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .wf-bar-wrap {
+      flex: 1;
+      display: flex;
+      height: 22px;
+      border-radius: 3px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .wf-train {
+      background: var(--signal-light);
+      border-right: 2px solid var(--signal);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.62rem;
+      font-weight: 600;
+      color: var(--signal);
+      letter-spacing: 0.04em;
+    }
+
+    .wf-test {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.62rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .wf-test.pass { background: rgba(46,125,82,0.15); color: #1D5235; }
+    .wf-test.fail { background: rgba(192,57,43,0.15); color: #7A1D14; }
+    .wf-test.warn { background: rgba(201,163,72,0.15); color: #7A5F1A; }
+
+    /* Insight alert */
+    .alert-box {
+      border-radius: 3px;
+      padding: 1.125rem 1.5rem;
+      margin: 1.5rem 0;
+    }
+
+    .alert-box.alert-danger {
+      background: rgba(192,57,43,0.07);
+      border: 1px solid rgba(192,57,43,0.25);
+    }
+
+    .alert-box.alert-info {
+      background: var(--signal-light);
+      border: 1px solid var(--signal-border);
+    }
+
+    .alert-eyebrow {
+      font-size: var(--xs);
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      margin-bottom: 0.5rem;
+    }
+
+    .alert-danger .alert-eyebrow { color: var(--negative); }
+    .alert-info   .alert-eyebrow { color: var(--signal); }
+
+    .alert-box p {
+      font-size: var(--sm);
+      line-height: 1.65;
+      margin-bottom: 0.5rem;
+      max-width: none;
+    }
+
+    .alert-box p:last-child { margin-bottom: 0; }
+
+    /* Overfit vs real comparison */
+    .compare-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin: 1.25rem 0;
+    }
+
+    @media (max-width: 500px) {
+      .compare-grid { grid-template-columns: 1fr; }
+    }
+
+    .compare-card {
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1rem;
+    }
+
+    .compare-card.overfit { border-color: rgba(192,57,43,0.35); }
+    .compare-card.real    { border-color: rgba(46,125,82,0.35); }
+
+    .compare-title {
+      font-size: var(--xs);
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+    }
+
+    .compare-card.overfit .compare-title { color: var(--negative); }
+    .compare-card.real    .compare-title { color: var(--positive); }
+
+    .compare-card ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .compare-card li {
+      font-size: var(--sm);
+      color: var(--text);
+      padding-left: 1rem;
+      position: relative;
+    }
+
+    .compare-card li::before {
+      position: absolute;
+      left: 0;
+    }
+
+    .compare-card.overfit li::before { content: '✗'; color: var(--negative); }
+    .compare-card.real    li::before { content: '✓'; color: var(--positive); }
+  </style>
+</head>
+<body>
+<div class="lesson-wrap">
+
+  <!-- ─── Header ─────────────────────────────────────────────────────────── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">
+      <span class="course-label">การเทรดเชิงปริมาณ</span>
+      <span class="lesson-label">บทเรียนที่ 04</span>
+    </div>
+    <h1 class="lesson-title">Overfitting และ Walk-Forward Test</h1>
+    <p class="lesson-thesis">
+      Backtest ที่ดูสมบูรณ์แบบอาจเป็นเพียงภาพลวงตา
+      <em>Overfitting</em> เกิดเมื่อกลยุทธ์ "จำ" ข้อมูลอดีตแทนที่จะ "เรียนรู้" จากมัน
+      บทนี้ใช้ผลลัพธ์ walk-forward จริงของ <code>hl-squeeze_momentum</code>
+      เพื่อให้คุณเห็นว่ากลยุทธ์นี้ผ่านการทดสอบได้แค่ไหน
+    </p>
+  </header>
+
+  <!-- ─── Objectives ─────────────────────────────────────────────────────── -->
+  <section class="objectives">
+    <h2>หลังจากจบบทเรียนนี้ คุณจะสามารถ</h2>
+    <ol>
+      <li>อธิบายได้ว่า overfitting คืออะไร และทำไม backtest จึงมักโกหก</li>
+      <li>อธิบาย walk-forward test ได้ — train fold คืออะไร, test fold คืออะไร, ทำไมถึงสำคัญ</li>
+      <li>อ่านผล walkforward_folds.json ของกลยุทธ์ตัวเองและตีความได้ว่ากลยุทธ์ผ่านหรือไม่ผ่าน</li>
+    </ol>
+  </section>
+
+  <!-- ─── Section 1: Overfitting คืออะไร ──────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>Overfitting คืออะไร</h2>
+
+    <p>
+      สมมติว่าคุณสอบวิชาคณิตศาสตร์โดยการท่องจำคำตอบของข้อสอบปีที่แล้วทีละข้อ
+      ถ้าข้อสอบปีนี้ออกเหมือนเดิมทุกประการ คุณจะสอบได้คะแนนสูงมาก
+      แต่ถ้าข้อสอบเปลี่ยน — คุณจะสอบตก
+    </p>
+
+    <p>
+      Overfitting ในการเทรดทำงานแบบเดียวกัน:
+      กลยุทธ์ถูก "จูน" พารามิเตอร์จนทำงานได้ดีเยี่ยมกับข้อมูลอดีต
+      แต่เมื่อตลาดเปลี่ยน กลยุทธ์นั้นล้มเหลว เพราะมันท่องจำรูปแบบที่ผ่านมา
+      แทนที่จะเรียนรู้ edge ที่แท้จริง
+    </p>
+
+    <div class="compare-grid">
+      <div class="compare-card overfit">
+        <div class="compare-title">กลยุทธ์ที่ Overfit</div>
+        <ul>
+          <li>Sharpe สูงมากใน backtest (&gt;2.0)</li>
+          <li>ทำงานดีเฉพาะช่วงเวลาที่ backtest</li>
+          <li>พารามิเตอร์ถูกจูนหลายรอบกับข้อมูลเดิม</li>
+          <li>ล้มเหลวเมื่อ regime ตลาดเปลี่ยน</li>
+        </ul>
+      </div>
+      <div class="compare-card real">
+        <div class="compare-title">กลยุทธ์ที่มี Edge จริง</div>
+        <ul>
+          <li>Sharpe สม่ำเสมอข้าม time period ต่างๆ</li>
+          <li>ทำงานได้ในหลาย regime (trending, ranging)</li>
+          <li>พารามิเตอร์ผ่าน out-of-sample test</li>
+          <li>ผลลัพธ์ live ใกล้เคียงกับ backtest</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Section 2: Walk-Forward Test ──────────────────────────────────── -->
+  <section class="lesson-section">
+    <h2>Walk-Forward Test คืออะไร</h2>
+
+    <p>
+      วิธีการทดสอบที่แบ่งข้อมูลออกเป็นหลาย fold โดยแต่ละ fold มีสองส่วน:
+    </p>
+
+    <ul style="margin: 0.75rem 0 1rem 1.25rem; display:flex; flex-direction:column; gap:0.5rem;">
+      <li style="font-size:var(--base);"><strong>Train period</strong> — ข้อมูลที่ optimizer "เห็น" เพื่อเลือกพารามิเตอร์ที่ดีที่สุด</li>
+      <li style="font-size:var(--base);"><strong>Test period</strong> — ข้อมูล out-of-sample ที่ optimizer ไม่เคยเห็นมาก่อน — นี่คือผลที่น่าเชื่อถือ</li>
+    </ul>
+
+    <p>
+      จากนั้น fold เลื่อนไปข้างหน้า (walk forward) และทำซ้ำ — สร้างภาพรวมว่ากลยุทธ์ทำงานได้
+      สม่ำเสมอแค่ไหนข้ามช่วงเวลาต่างๆ ในประวัติศาสตร์
+    </p>
+
+    <div class="wf-diagram">
+      <div class="wf-row">
+        <div class="wf-label">Fold 1</div>
+        <div class="wf-bar-wrap">
+          <div class="wf-train" style="width:62%;">TRAIN</div>
+          <div class="wf-test pass" style="width:38%;">TEST ✓</div>
+        </div>
+      </div>
+      <div class="wf-row">
+        <div class="wf-label">Fold 2</div>
+        <div class="wf-bar-wrap">
+          <div class="wf-train" style="width:50%;">TRAIN</div>
+          <div class="wf-test pass" style="width:50%;">TEST ✓</div>
+        </div>
+      </div>
+      <div class="wf-row">
+        <div class="wf-label">Fold 3</div>
+        <div class="wf-bar-wrap">
+          <div class="wf-train" style="width:62%;">TRAIN</div>
+          <div class="wf-test pass" style="width:38%;">TEST ✓</div>
+        </div>
+      </div>
+      <div class="wf-row">
+        <div class="wf-label">Fold 4</div>
+        <div class="wf-bar-wrap">
+          <div class="wf-train" style="width:75%;">TRAIN</div>
+          <div class="wf-test pass" style="width:25%;">TEST ✓</div>
+        </div>
+      </div>
+      <div class="wf-row">
+        <div class="wf-label">Fold 5</div>
+        <div class="wf-bar-wrap">
+          <div class="wf-train" style="width:85%;">TRAIN</div>
+          <div class="wf-test fail" style="width:15%;">TEST ✗</div>
+        </div>
+      </div>
+    </div>
+
+    <p>
+      ถ้ากลยุทธ์มี edge แท้จริง test period ของแต่ละ fold ควรให้ผลบวกโดยรวม —
+      ไม่จำเป็นต้องชนะทุก fold แต่ควรสม่ำเสมอ
+      กลยุทธ์ที่ overfit มักทำได้ดีมากในบาง fold และล้มเหลวในบาง fold —
+      เพราะมันจำรูปแบบเฉพาะช่วงเวลาหนึ่ง ไม่ใช่ edge ที่ยั่งยืน
+    </p>
+  </section>
+
+  <!-- ─── Section 3: ผลจริงของ hl-squeeze_momentum ─────────────────────── -->
+  <section class="lesson-section">
+    <h2>ผล Walk-Forward จริงของ hl-squeeze_momentum</h2>
+
+    <p>
+      go-trader รัน walk-forward test 5 folds บน BTC/USDT 1h
+      ตั้งแต่ 2023-01-01 ถึง 2026-01-01
+      ผลลัพธ์อยู่ใน <code>backtest/candidates/squeeze_983/walkforward_folds.json</code>
+    </p>
+
+    <div class="fold-table-wrap">
+      <table class="fold-table">
+        <thead>
+          <tr>
+            <th>Fold</th>
+            <th>Test Period</th>
+            <th>Sharpe</th>
+            <th>Max DD</th>
+            <th>Return</th>
+            <th>Trades</th>
+            <th>ผล</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="fold-good">
+            <td class="mono">1</td>
+            <td style="font-size:var(--xs); color:var(--text-muted);">Jun – Aug 2023</td>
+            <td class="pos">0.89</td>
+            <td class="neg">-11.6%</td>
+            <td class="pos">+3.6%</td>
+            <td class="mono">11</td>
+            <td><span class="badge badge-pass">ผ่าน</span></td>
+          </tr>
+          <tr class="fold-good">
+            <td class="mono">2</td>
+            <td style="font-size:var(--xs); color:var(--text-muted);">Jan – Mar 2024</td>
+            <td class="pos">2.43</td>
+            <td class="neg">-12.6%</td>
+            <td class="pos">+17.3%</td>
+            <td class="mono">11</td>
+            <td><span class="badge badge-pass">ผ่าน</span></td>
+          </tr>
+          <tr class="fold-good">
+            <td class="mono">3</td>
+            <td style="font-size:var(--xs); color:var(--text-muted);">Aug – Oct 2024</td>
+            <td class="pos">1.13</td>
+            <td class="warn">-18.2%</td>
+            <td class="pos">+6.9%</td>
+            <td class="mono">10</td>
+            <td><span class="badge badge-pass">ผ่าน</span></td>
+          </tr>
+          <tr class="fold-good">
+            <td class="mono">4</td>
+            <td style="font-size:var(--xs); color:var(--text-muted);">Mar – May 2025</td>
+            <td class="pos">3.36</td>
+            <td class="pos">-3.2%</td>
+            <td class="pos">+10.7%</td>
+            <td class="mono">17</td>
+            <td><span class="badge badge-warning">สงสัย*</span></td>
+          </tr>
+          <tr class="fold-danger">
+            <td class="mono"><strong>5</strong></td>
+            <td style="font-size:var(--xs); color:var(--text-muted);"><strong>Oct 2025 – Jan 2026</strong></td>
+            <td class="neg"><strong>-2.64</strong></td>
+            <td class="neg"><strong>-13.1%</strong></td>
+            <td class="neg"><strong>-10.1%</strong></td>
+            <td class="mono"><strong>2</strong></td>
+            <td><span class="badge badge-fail">ล้มเหลว</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="font-size:var(--xs); color:var(--text-muted); margin-top:0.5rem;">
+      * Fold 4: Sharpe 3.36 สูงผิดปกติ อาจเป็น bull run ที่ขับเคลื่อนโดย BTC halving — ผลดีแต่ต้องระวัง
+    </p>
+
+    <div class="alert-box alert-danger">
+      <div class="alert-eyebrow">สิ่งสำคัญที่สุดในตารางนี้</div>
+      <p>
+        <strong>Fold 5 คือช่วงเวลาล่าสุด (ต.ค. 2025 – ม.ค. 2026)</strong>
+        และมันล้มเหลว — Sharpe -2.64, ขาดทุน 10.1%
+        กลยุทธ์ live ของคุณกำลังรันอยู่ในช่วงเวลาถัดจาก fold 5
+        นั่นหมายความว่า <strong>regime ของตลาดในปัจจุบันอาจใกล้เคียงกับ fold 5</strong>
+        มากกว่า fold 4 ที่ทำได้ดีเยี่ยม
+      </p>
+      <p>
+        แต่มีข้อสังเกตสำคัญ: fold 5 มีเพียง <strong>2 การเทรด</strong>
+        จากบทที่แล้ว เรารู้ว่า N=2 ไม่มีนัยสำคัญทางสถิติ
+        ดังนั้น fold 5 บอกว่ากลยุทธ์ "ล้มเหลวในช่วงนั้น" — แต่ไม่สามารถบอกได้ว่า edge หายไปแล้ว
+      </p>
+    </div>
+  </section>
+
+  <!-- ─── Section 4: สิ่งที่ walk-forward บอก ─────────────────────────── -->
+  <section class="lesson-section">
+    <h2>สรุป: กลยุทธ์นี้ overfit หรือเปล่า?</h2>
+
+    <p>
+      คำตอบที่ซื่อสัตย์คือ <strong>"ยังไม่ชัดเจน"</strong> — และนั่นคือสิ่งที่ walk-forward บอก:
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">การอ่าน walk-forward อย่างถูกต้อง</span>
+      <table class="data-table">
+        <thead>
+          <tr><th>สัญญาณ</th><th>ความหมาย</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>4 จาก 5 fold เป็นบวก</td>
+            <td>มีสัญญาณของ edge — ไม่ใช่กลยุทธ์สุ่มอย่างชัดเจน</td>
+          </tr>
+          <tr>
+            <td>Fold 5 ล้มเหลว (N=2)</td>
+            <td>ข้อมูลน้อยเกินไปจะสรุปว่า edge หายไป แต่เป็นสัญญาณเตือน</td>
+          </tr>
+          <tr>
+            <td>Sharpe ข้าม fold: 0.89 – 3.36</td>
+            <td>ผันแปรสูง — edge ขึ้นอยู่กับ regime ของตลาด</td>
+          </tr>
+          <tr>
+            <td>Open params ไม่เปลี่ยน (frozen)</td>
+            <td>Squeeze Momentum entry signal ไม่ถูก overfit — เฉพาะ close stack ที่ถูกจูน</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="alert-box alert-info">
+      <div class="alert-eyebrow">ข้อสรุปสำหรับ Trust Threshold ของคุณ</div>
+      <p>
+        Walk-forward ผ่าน 4/5 fold — นั่นคือสัญญาณบวกที่พิสูจน์ว่ากลยุทธ์ไม่ได้ overfit อย่างรุนแรง
+        แต่ Sharpe ที่ผันแปรสูงบอกว่า <strong>performance ขึ้นอยู่กับ regime ของตลาด</strong>
+      </p>
+      <p>
+        กลยุทธ์นี้ทำงานได้ดีในตลาดขาขึ้น (folds 2 และ 4) และพอรับได้ในตลาดแกว่ง (folds 1 และ 3)
+        แต่ fold 5 บอกว่ามีช่วงเวลาที่มันไม่ทำงาน — นั่นคือข้อมูลสำคัญ
+        การเปิด regime detection ใน config อาจช่วยให้กลยุทธ์หยุดเทรดในช่วงเหล่านั้นได้
+      </p>
+    </div>
+  </section>
+
+  <!-- ─── Section 5: ดู walkforward ใน go-trader ────────────────────────── -->
+  <section class="lesson-section">
+    <h2>ดู Walk-Forward ด้วยตัวเองใน go-trader</h2>
+
+    <div class="codebase-callout">
+      <h3>ใน go-trader</h3>
+      <p>
+        ผลลัพธ์ walk-forward ทั้งหมดอยู่ที่:
+        <code>backtest/candidates/squeeze_983/walkforward_folds.json</code>
+      </p>
+      <p>
+        รันใหม่ได้ด้วย:
+        <code>uv run python backtest/candidates/squeeze_983/walkforward.py</code>
+      </p>
+      <p>
+        Script นี้ freeze entry params ไว้ที่ default และทดสอบเฉพาะ close stack ต่างๆ
+        ผ่าน 5 folds บน BTC, ETH, SOL 1h ตั้งแต่ 2023 ถึง 2026
+        เลือก best close stack โดยใช้ <code>dd_adjusted_return</code> เป็น metric
+      </p>
+      <p>
+        ไฟล์สำคัญอีกไฟล์: <code>backtest/candidates/squeeze_983/validation.json</code>
+        — ผลการตรวจสอบกลยุทธ์บน dataset ที่แยกต่างหากจาก walkforward
+      </p>
+    </div>
+  </section>
+
+  <!-- ─── Quiz ──────────────────────────────────────────────────────────── -->
+  <section class="quiz-section">
+    <h2>ทดสอบความเข้าใจ</h2>
+
+    <div class="quiz-card" data-correct="c">
+      <p class="question">
+        1. Walk-forward test ต่างจาก backtest ธรรมดาอย่างไร?
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q1" value="a"> ใช้ข้อมูลมากกว่า backtest ธรรมดา จึงให้ Sharpe สูงกว่า</label>
+        <label class="option"><input type="radio" name="q1" value="b"> ทดสอบหลาย asset พร้อมกัน แทนที่จะทดสอบ asset เดียว</label>
+        <label class="option"><input type="radio" name="q1" value="c"> แยก train กับ test ออกจากกัน ทำให้ผล test เป็น out-of-sample ที่เชื่อถือได้</label>
+        <label class="option"><input type="radio" name="q1" value="d"> ปรับพารามิเตอร์อัตโนมัติขณะเทรด live</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: แยก train กับ test ออกจากกัน ทำให้ผล test เป็น out-of-sample ที่เชื่อถือได้</p>
+        <p class="explanation">
+          Backtest ธรรมดาใช้ข้อมูลเดียวกันทั้งสำหรับหา params และวัดผล — นั่นคือ in-sample เสมอ
+          Walk-forward แยกออก: train fold ใช้หา params, test fold วัดผลบนข้อมูลที่ optimizer ไม่เคยเห็น
+          ผล test fold จึงน่าเชื่อถือกว่ามาก
+        </p>
+      </div>
+    </div>
+
+    <div class="quiz-card" data-correct="b">
+      <p class="question">
+        2. จากผล walk-forward ของ hl-squeeze_momentum
+        fold ใดที่ให้ข้อมูลที่น่าเชื่อถือที่สุดสำหรับการตัดสินใจลงทุน ณ วันนี้ และเพราะอะไร?
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q2" value="a"> Fold 4 — Sharpe 3.36 สูงที่สุดและ DD ต่ำที่สุด</label>
+        <label class="option"><input type="radio" name="q2" value="b"> Fold 5 — ใกล้เคียง regime ปัจจุบันมากที่สุด แม้จะมี N น้อย</label>
+        <label class="option"><input type="radio" name="q2" value="c"> Fold 1 — N มากที่สุดจึงน่าเชื่อถือที่สุดทางสถิติ</label>
+        <label class="option"><input type="radio" name="q2" value="d"> ค่าเฉลี่ยของทุก fold — การรวมกันให้ภาพที่สมดุลที่สุด</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: Fold 5 — ใกล้เคียง regime ปัจจุบันมากที่สุด แม้จะมี N น้อย</p>
+        <p class="explanation">
+          สำหรับการตัดสินใจลงทุน ณ วันนี้ สิ่งที่สำคัญที่สุดคือ regime ของตลาดในปัจจุบัน
+          Fold 5 คือช่วงเวลาล่าสุดก่อน live — regime ในช่วงนั้นน่าจะใกล้เคียงกับปัจจุบันมากที่สุด
+          แม้ N=2 จะทำให้ข้อสรุปทางสถิติอ่อนแอ แต่ fold 4 เกิดขึ้นใน bull run ที่อาจไม่ represent ปัจจุบัน
+        </p>
+      </div>
+    </div>
+
+    <div class="quiz-card" data-correct="d">
+      <p class="question">
+        3. หาก fold 5 มี N=2 ทำไมเราถึงยังกังวลเรื่องผลลัพธ์ที่แย่ของมัน
+        ในเมื่อเราบอกว่า N ต่ำเกินไปที่จะสรุปได้?
+      </p>
+      <div class="quiz-options">
+        <label class="option"><input type="radio" name="q2" value="a"> ไม่ต้องกังวล N=2 ไม่มีความหมายใดๆ ทั้งสิ้น</label>
+        <label class="option"><input type="radio" name="q2" value="b"> N=2 พิสูจน์ว่ากลยุทธ์ broke — ต้องหยุดรันทันที</label>
+        <label class="option"><input type="radio" name="q2" value="c"> N ต่ำหมายถึงผลบวกเท่านั้นที่ไม่น่าเชื่อ ผลลบยังน่าเชื่อถือ</label>
+        <label class="option"><input type="radio" name="q2" value="d"> N ต่ำหมายถึงสรุปไม่ได้ทั้งบวกและลบ แต่ยังเป็นสัญญาณเตือนที่ควรติดตาม</label>
+      </div>
+      <button class="reveal-btn" type="button">ตรวจคำตอบ</button>
+      <div class="quiz-reveal" hidden>
+        <p class="correct-label">ถูก: N ต่ำหมายถึงสรุปไม่ได้ทั้งบวกและลบ แต่ยังเป็นสัญญาณเตือนที่ควรติดตาม</p>
+        <p class="explanation">
+          N=2 ทำให้สรุปไม่ได้อย่างเด็ดขาดทั้งสองทาง — กลยุทธ์อาจยังดีอยู่ก็ได้
+          แต่ข้อมูลน้อยมากใน fold ล่าสุดเป็นสัญญาณเตือนสองอย่าง:
+          (1) ตลาดในช่วงนั้นอาจไม่เอื้อต่อกลยุทธ์นี้ ทำให้ signal หายาก
+          (2) เราไม่มีข้อมูล live มากพอที่จะยืนยันว่า edge ยังคงอยู่
+          ดังนั้นควรติดตามอย่างใกล้ชิด ไม่ใช่เพิกเฉย
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Primary source ──────────────────────────────────────────────────── -->
+  <section class="primary-source">
+    <h2>แหล่งข้อมูลหลัก</h2>
+    <p>
+      <strong>Advances in Financial Machine Learning</strong> — Marcos López de Prado
+      บทที่ 7 "Cross-Validation in Finance" และบทที่ 11 "The Backtesting Illusion"
+      เป็นการอ่านที่สำคัญที่สุดสำหรับเรื่อง overfitting ในการเทรด
+      López de Prado แสดงให้เห็นว่า backtest มักโกหกอย่างเป็นระบบ และ
+      walk-forward (Combinatorial Purged Cross-Validation) คือวิธีป้องกัน
+    </p>
+    <p>
+      อ่านก่อนเสริม: <strong>Quantitative Trading</strong> — Ernest P. Chan บทที่ 3
+      อธิบาย parameter optimization pitfalls ในแบบที่เข้าใจง่ายกว่า
+      ก่อนจะลง López de Prado ซึ่งหนักกว่า
+    </p>
+  </section>
+
+  <!-- ─── Footer nav ──────────────────────────────────────────────────────── -->
+  <nav class="lesson-nav">
+    <div class="ask-teacher">
+      <p>มีคำถามเกี่ยวกับผล walk-forward ของกลยุทธ์ตัวเอง หรืออยากเข้าใจว่า fold ใดน่ากังวลมากที่สุด —
+        ถามในบทสนทนาได้เลย</p>
+    </div>
+    <div class="nav-next" style="display:flex; gap:1rem; flex-direction:column; align-items:flex-end;">
+      <a href="0005-regime-and-capital.html">บทถัดไป: Regime Detection &amp; Capital Sizing →</a>
+      <a href="0003-reading-backtest-output.html">← ย้อนกลับ: Backtest Output</a>
+    </div>
+  </nav>
+
+</div><!-- .lesson-wrap -->
+
+<script>
+document.querySelectorAll('.quiz-card').forEach(function (card) {
+  var correct = card.dataset.correct;
+  var btn     = card.querySelector('.reveal-btn');
+  var reveal  = card.querySelector('.quiz-reveal');
+  var inputs  = card.querySelectorAll('.option input[type="radio"]');
+
+  btn.addEventListener('click', function () {
+    reveal.hidden = false;
+    inputs.forEach(function (inp) {
+      inp.disabled = true;
+      var label = inp.closest('.option');
+      if (inp.value === correct)  { label.classList.add('correct'); }
+      else if (inp.checked)       { label.classList.add('wrong'); }
+    });
+    btn.textContent = 'เฉลยแล้ว';
+    btn.disabled = true;
+  });
+});
+</script>
+</body>
+</html>
