@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บทเรียนที่ 05 — Regime Detection และ ADX</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── Lesson-05 additions ── */
+
+    /* Decision tree diagram */
+    .decision-tree {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1.5rem;
+      margin: 1.25rem 0;
+      overflow-x: auto;
+    }
+
+    .dt-root {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .dt-node {
+      background: var(--ground);
+      border: 1.5px solid var(--signal-border);
+      border-radius: 4px;
+      padding: 0.5rem 1.1rem;
+      font-size: var(--sm);
+      font-weight: 600;
+      color: var(--signal);
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .dt-connector {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .dt-line-v {
+      width: 2px;
+      height: 1.25rem;
+      background: var(--border);
+    }
+
+    .dt-branches {
+      display: flex;
+      gap: 2rem;
+      align-items: flex-start;
+    }
+
+    .dt-branch {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .dt-label {
+      font-size: var(--xs);
+      color: var(--text-muted);
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 0.25rem;
+      font-family: var(--font-mono);
+    }
+
+    .dt-leaf {
+      border-radius: 4px;
+      padding: 0.5rem 1rem;
+      font-size: var(--sm);
+      font-weight: 600;
+      text-align: center;
+      white-space: nowrap;
+      font-family: var(--font-mono);
+    }
+
+    .dt-leaf.leaf-ranging  { background: rgba(201,163,72,0.12);  color: #7A5F1A; border: 1.5px solid var(--accent-border); }
+    .dt-leaf.leaf-trending-up   { background: rgba(46,125,82,0.10);   color: #1D5235; border: 1.5px solid rgba(46,125,82,0.3); }
+    .dt-leaf.leaf-trending-down { background: rgba(192,57,43,0.10);   color: #7A1D14; border: 1.5px solid rgba(192,57,43,0.25); }
+
+    .dt-second-row {
+      display: flex;
+      gap: 2rem;
+      align-items: flex-start;
+      margin-top: 1rem;
+    }
+
+    /* ADX meter */
+    .adx-meter-wrap {
+      margin: 1.5rem 0;
+    }
+
+    .adx-meter-bar {
+      position: relative;
+      height: 14px;
+      border-radius: 7px;
+      background: linear-gradient(
+        to right,
+        rgba(201,163,72,0.35) 0%,
+        rgba(201,163,72,0.35) 20%,
+        rgba(61,107,142,0.30) 20%,
+        rgba(61,107,142,0.30) 40%,
+        rgba(46,125,82,0.30) 40%,
+        rgba(46,125,82,0.30) 100%
+      );
+      border: 1px solid var(--border);
+    }
+
+    .adx-meter-tick {
+      position: absolute;
+      top: -1.5rem;
+      transform: translateX(-50%);
+      font-size: var(--xs);
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .adx-meter-tick::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 1.6rem;
+      width: 1px;
+      height: 12px;
+      background: var(--text-faint);
+    }
+
+    .adx-meter-zones {
+      display: flex;
+      margin-top: 0.5rem;
+    }
+
+    .adx-zone {
+      font-size: var(--xs);
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    /* Config snippet */
+    .code-block {
+      background: #1A2332;
+      color: #C8D8E8;
+      border-radius: 4px;
+      padding: 1.25rem 1.5rem;
+      margin: 1.25rem 0;
+      font-family: var(--font-mono);
+      font-size: var(--xs);
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+
+    .code-block .c-key    { color: #8BB8D4; }
+    .code-block .c-str    { color: #A8D8A8; }
+    .code-block .c-num    { color: #E8C87A; }
+    .code-block .c-bool   { color: #D4A8D4; }
+    .code-block .c-cmt    { color: #5A7A8A; font-style: italic; }
+    .code-block .c-hi     { background: rgba(201,163,72,0.18); border-radius: 2px; padding: 0 0.15em; }
+
+    /* Gate flow diagram */
+    .gate-flow {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: 1.25rem 0;
+      padding: 1rem 1.25rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+    }
+
+    .gf-step {
+      background: var(--ground);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.35rem 0.75rem;
+      font-size: var(--sm);
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .gf-step.step-regime {
+      border-color: var(--signal-border);
+      color: var(--signal);
+      font-weight: 600;
+    }
+
+    .gf-step.step-blocked {
+      border-color: rgba(192,57,43,0.3);
+      color: var(--negative);
+      font-weight: 600;
+    }
+
+    .gf-step.step-pass {
+      border-color: rgba(46,125,82,0.3);
+      color: var(--positive);
+      font-weight: 600;
+    }
+
+    .gf-arrow {
+      color: var(--text-faint);
+      font-size: var(--lg);
+      flex-shrink: 0;
+    }
+
+    /* Quiz - regime classifier */
+    .regime-quiz-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .regime-quiz-card .question {
+      font-size: var(--base);
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.75rem;
+      line-height: 1.45;
+    }
+
+    .metrics-row {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .metric-chip {
+      background: var(--ground);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.35rem 0.75rem;
+      font-family: var(--font-mono);
+      font-size: var(--sm);
+    }
+
+    .metric-chip .m-label {
+      font-size: var(--xs);
+      color: var(--text-muted);
+      display: block;
+      line-height: 1;
+      margin-bottom: 0.2rem;
+    }
+
+    .metric-chip .m-val {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .metric-chip.adx-low  .m-val { color: var(--accent); }
+    .metric-chip.adx-high .m-val { color: var(--signal); }
+
+    .regime-options {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.75rem;
+    }
+
+    .regime-btn {
+      border: 1.5px solid var(--border);
+      border-radius: 3px;
+      padding: 0.4rem 0.875rem;
+      font-family: var(--font-body);
+      font-size: var(--sm);
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--ground);
+      color: var(--text);
+      font-family: var(--font-mono);
+      transition: border-color 0.1s, background-color 0.1s;
+    }
+
+    .regime-btn:hover:not(:disabled) { background: var(--surface-2); }
+    .regime-btn.btn-ranging   { border-color: var(--accent-border); color: #7A5F1A; }
+    .regime-btn.btn-up        { border-color: rgba(46,125,82,0.3);  color: #1D5235; }
+    .regime-btn.btn-down      { border-color: rgba(192,57,43,0.25); color: #7A1D14; }
+    .regime-btn:disabled      { opacity: 0.6; cursor: default; }
+
+    .regime-feedback {
+      font-size: var(--sm);
+      margin-top: 0.625rem;
+      padding: 0.625rem 0.875rem;
+      border-radius: 3px;
+      line-height: 1.55;
+    }
+
+    .regime-feedback.correct {
+      background: rgba(46,125,82,0.09);
+      border: 1px solid rgba(46,125,82,0.25);
+      color: #1D5235;
+    }
+
+    .regime-feedback.wrong {
+      background: rgba(192,57,43,0.08);
+      border: 1px solid rgba(192,57,43,0.2);
+      color: #7A1D14;
+    }
+
+    .score-display {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1rem 1.5rem;
+      margin-top: 1rem;
+      text-align: center;
+      font-size: var(--lg);
+      font-weight: 600;
+      color: var(--text);
+      display: none;
+    }
+  </style>
+</head>
+<body>
+<div class="lesson-wrap">
+
+  <!-- ── Header ── -->
+  <header class="lesson-header">
+    <div class="lesson-meta">
+      <span class="course-label">Quant Trading</span>
+      <span class="lesson-label">บทเรียนที่ 05 จาก 12</span>
+    </div>
+    <h1 class="lesson-title">Regime Detection<br>และ ADX</h1>
+    <p class="lesson-thesis">
+      Fold 5 ของ squeeze_momentum ล้มเหลวด้วย Sharpe −2.64 — ไม่ใช่เพราะ strategy เสีย
+      แต่เพราะ market อยู่ใน <em>regime ผิดประเภท</em> เรียนรู้ว่า ADX คืออะไร
+      go-trader ใช้มันอย่างไร และ <code>allowed_regimes</code> ป้องกันปัญหาแบบนี้ได้อย่างไร
+    </p>
+  </header>
+
+  <!-- ── Learning objectives ── -->
+  <section class="objectives">
+    <h2>จะเรียนรู้อะไรใน Lesson นี้</h2>
+    <ol>
+      <li>อ่านค่า ADX, DI+, DI− แล้วบอกได้ว่า market อยู่ใน regime ใด</li>
+      <li>เข้าใจว่า <code>allowed_regimes</code> gate ทำงานอย่างไรใน go-trader config</li>
+      <li>อธิบายได้ว่าทำไม fold 5 จึงล้มเหลว และ regime gate จะช่วยได้อย่างไร</li>
+    </ol>
+  </section>
+
+  <!-- ── Section 1: ปัญหา ── -->
+  <section class="lesson-section">
+    <h2>กลับไปที่ Fold 5</h2>
+
+    <p>
+      ใน Lesson 04 เราพบว่า BTC/USDT 1h ของ squeeze_momentum มีปัญหาใน fold สุดท้าย:
+    </p>
+
+    <div class="fold-table-wrap" style="overflow-x:auto;margin:1.25rem 0;">
+      <table style="width:100%;border-collapse:collapse;font-size:var(--sm);">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:0.375rem 0.75rem;border-bottom:2px solid var(--border);color:var(--text-muted);font-size:var(--xs);text-transform:uppercase;letter-spacing:.05em;">Fold</th>
+            <th style="text-align:left;padding:0.375rem 0.75rem;border-bottom:2px solid var(--border);color:var(--text-muted);font-size:var(--xs);text-transform:uppercase;letter-spacing:.05em;">ช่วงเวลา</th>
+            <th style="text-align:left;padding:0.375rem 0.75rem;border-bottom:2px solid var(--border);color:var(--text-muted);font-size:var(--xs);text-transform:uppercase;letter-spacing:.05em;">Sharpe</th>
+            <th style="text-align:left;padding:0.375rem 0.75rem;border-bottom:2px solid var(--border);color:var(--text-muted);font-size:var(--xs);text-transform:uppercase;letter-spacing:.05em;">Return</th>
+            <th style="text-align:left;padding:0.375rem 0.75rem;border-bottom:2px solid var(--border);color:var(--text-muted);font-size:var(--xs);text-transform:uppercase;letter-spacing:.05em;">Trades</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style="padding:.4rem .75rem;border-bottom:1px solid var(--border);">1–4</td><td style="padding:.4rem .75rem;border-bottom:1px solid var(--border);">Jun 2023 – May 2025</td><td style="padding:.4rem .75rem;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--xs);color:var(--positive);font-weight:600;">+0.89 ถึง +3.36</td><td style="padding:.4rem .75rem;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--xs);color:var(--positive);font-weight:600;">+3.6% ถึง +17.3%</td><td style="padding:.4rem .75rem;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:var(--xs);">10–17</td></tr>
+          <tr style="background:rgba(192,57,43,0.06)"><td style="padding:.4rem .75rem;border-bottom:none;font-weight:600;">5</td><td style="padding:.4rem .75rem;border-bottom:none;">Oct 2025 – Jan 2026</td><td style="padding:.4rem .75rem;border-bottom:none;font-family:var(--font-mono);font-size:var(--xs);color:var(--negative);font-weight:600;">−2.64</td><td style="padding:.4rem .75rem;border-bottom:none;font-family:var(--font-mono);font-size:var(--xs);color:var(--negative);font-weight:600;">−10.1%</td><td style="padding:.4rem .75rem;border-bottom:none;font-family:var(--font-mono);font-size:var(--xs);color:var(--accent);font-weight:600;">2</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Squeeze momentum เป็น breakout strategy — มันรอ price consolidate แล้ว break out ไปทิศทางหนึ่ง
+      มันทำงานดีเมื่อ market กำลัง <em>trending</em> — มี momentum ชัดเจน
+      แต่เมื่อ market <em>ไม่มี trend</em> (choppy, sideways) breakout สัญญาณจะ false สูงมาก
+      ราคาออกมาแล้วกลับมาทันที — เรียกว่า whipsaw
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">สมมติฐาน</span>
+      <p style="font-size:var(--sm);color:var(--text);margin:0;line-height:1.65;">
+        Fold 5 เป็นช่วงที่ BTC ไม่มี trend ชัดเจน market consolidate อยู่นาน
+        Squeeze momentum ได้รับสัญญาณ breakout แต่ breakout ทุกครั้งล้มเหลว
+        N=2 บอกว่า trades น้อยมาก — ถ้า regime gate เปิดใช้ อาจ skip เข้าทั้งหมด
+      </p>
+    </div>
+
+    <p>
+      คำถามคือ: เราจะ <em>วัด</em> ได้อย่างไรว่า market กำลัง trend หรือไม่?
+      คำตอบคือ <strong>ADX</strong>
+    </p>
+  </section>
+
+  <!-- ── Section 2: ADX คืออะไร ── -->
+  <section class="lesson-section">
+    <h2>ADX คืออะไร</h2>
+
+    <p>
+      <strong>ADX (Average Directional Index)</strong> วัด <em>ความแรงของ trend</em> — ไม่ใช่ทิศทาง
+      ค่า ADX สูง = trend แรง ไม่ว่าจะขึ้นหรือลง
+      ค่า ADX ต่ำ = market choppy ไม่มีทิศทาง
+    </p>
+
+    <p>
+      ADX คำนวณจากสองค่าเสริมคือ <strong>DI+</strong> (Directional Indicator ขาขึ้น) และ <strong>DI−</strong> (ขาลง)
+      ทั้งสามตัวนี้คือสิ่งที่ go-trader บันทึกทุก cycle ใน <code>shared_tools/regime.py</code>
+    </p>
+
+    <div class="adx-meter-wrap">
+      <div style="position:relative;padding-top:2rem;margin-bottom:0.5rem;">
+        <span class="adx-meter-tick" style="left:0%">0</span>
+        <span class="adx-meter-tick" style="left:20%">20</span>
+        <span class="adx-meter-tick" style="left:40%">40</span>
+        <span class="adx-meter-tick" style="left:100%">100</span>
+        <div class="adx-meter-bar"></div>
+      </div>
+      <div class="adx-meter-zones" style="justify-content:space-between;margin-top:0.375rem;">
+        <span class="adx-zone" style="width:20%;color:#7A5F1A;font-weight:600;">Ranging<br><span style="font-weight:400;color:var(--text-muted);">ADX &lt; 20</span></span>
+        <span class="adx-zone" style="width:20%;color:var(--signal);font-weight:600;">อาจ trend<br><span style="font-weight:400;color:var(--text-muted);">ADX 20–40</span></span>
+        <span class="adx-zone" style="width:60%;color:var(--positive);font-weight:600;text-align:right;">Trend แรง<br><span style="font-weight:400;color:var(--text-muted);">ADX &gt; 40</span></span>
+      </div>
+    </div>
+
+    <p>
+      go-trader ใช้ default <code>adx_threshold = 20.0</code> (config field <code>regime.adx_threshold</code>) เป็นเส้นแบ่ง:
+      ต่ำกว่า 20 = <code>ranging</code>, สูงกว่า 20 = ดู DI+ กับ DI− เพื่อหาทิศทาง
+    </p>
+  </section>
+
+  <!-- ── Section 3: Decision Tree ── -->
+  <section class="lesson-section">
+    <h2>Logic การจำแนก Regime</h2>
+
+    <p>
+      โค้ดนี้มาจาก <code>shared_tools/regime.py</code> บรรทัด 271–282 โดยตรง:
+    </p>
+
+    <div class="decision-tree">
+      <div class="dt-root">
+        <div class="dt-node">ADX &lt; 20 ?</div>
+        <div style="display:flex;gap:3rem;margin-top:1rem;align-items:flex-start;">
+
+          <!-- Yes branch -->
+          <div class="dt-branch">
+            <div class="dt-label" style="color:#7A5F1A;">YES</div>
+            <div class="dt-line-v"></div>
+            <div class="dt-leaf leaf-ranging">ranging</div>
+          </div>
+
+          <!-- No branch -->
+          <div class="dt-branch">
+            <div class="dt-label">NO</div>
+            <div class="dt-line-v"></div>
+            <div class="dt-node">DI+ &gt; DI− ?</div>
+            <div style="display:flex;gap:2rem;margin-top:1rem;align-items:flex-start;">
+              <div class="dt-branch">
+                <div class="dt-label" style="color:#1D5235;">YES</div>
+                <div class="dt-line-v"></div>
+                <div class="dt-leaf leaf-trending-up">trending_up</div>
+              </div>
+              <div class="dt-branch">
+                <div class="dt-label" style="color:#7A1D14;">NO</div>
+                <div class="dt-line-v"></div>
+                <div class="dt-leaf leaf-trending-down">trending_down</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <p style="font-size:var(--sm);color:var(--text-muted);">
+      กฎ: ตรวจ ADX ก่อนเสมอ — ถ้า ADX ต่ำกว่า threshold ให้ตอบ <code>ranging</code> ทันที
+      ไม่สนใจค่า DI+ DI− เลย (แม้ DI+ จะสูงกว่า DI− มาก)
+    </p>
+
+    <div class="codebase-callout">
+      <h3>go-trader codebase</h3>
+      <p>
+        Logic นี้อยู่ใน <code>shared_tools/regime.py</code> ฟังก์ชัน <code>compute_regime()</code>
+        บรรทัด 271–282: loop ผ่านทุก bar, เช็ค <code>adx_val &lt; adx_threshold</code> ก่อน
+        แล้วค่อยเปรียบเทียบ <code>plus_di[i] &gt; minus_di[i]</code>
+      </p>
+      <p>
+        ค่า <code>adx_threshold</code> default คือ <code>20.0</code> (บรรทัด 77 ใน <code>scheduler/config.go</code>)
+        ปรับได้ใน top-level config: <code>regime.adx_threshold</code>
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Section 4: เปิดใช้ใน config ── -->
+  <section class="lesson-section">
+    <h2>เปิดใช้ Regime Detection ใน Config</h2>
+
+    <p>
+      Regime detection <strong>ปิดอยู่ by default</strong> ต้องเปิดใช้ที่ระดับ top-level config
+      และตั้ง <code>allowed_regimes</code> ที่ strategy เพื่อให้ gate ทำงาน:
+    </p>
+
+    <div class="code-block">
+<span class="c-cmt">// scheduler/config.json — เพิ่มสองส่วนนี้</span>
+{
+  <span class="c-key">"regime"</span>: {
+    <span class="c-key c-hi">"enabled"</span>: <span class="c-bool c-hi">true</span>,       <span class="c-cmt">// เปิดระบบ ADX ทั้งหมด</span>
+    <span class="c-key">"period"</span>: <span class="c-num">14</span>,           <span class="c-cmt">// Wilder's ADX period (default 14)</span>
+    <span class="c-key">"adx_threshold"</span>: <span class="c-num">20.0</span>   <span class="c-cmt">// ต่ำกว่านี้ = ranging</span>
+  },
+
+  <span class="c-key">"strategies"</span>: [{
+    <span class="c-key">"id"</span>: <span class="c-str">"hl-squeeze_momentum"</span>,
+    <span class="c-key">"platform"</span>: <span class="c-str">"hyperliquid"</span>,
+    <span class="c-cmt">... (config อื่นๆ)</span>
+    <span class="c-key c-hi">"allowed_regimes"</span>: [
+      <span class="c-str c-hi">"trending_up"</span>,
+      <span class="c-str c-hi">"trending_down"</span>
+    ]
+    <span class="c-cmt">// เข้า trade เฉพาะเมื่อ market trending เท่านั้น</span>
+  }]
+}
+    </div>
+
+    <p>
+      ถ้าตั้ง <code>allowed_regimes</code> ไว้แต่ลืมเปิด <code>regime.enabled</code>,
+      go-trader จะแสดง warning ว่า gate เป็น no-op — ดู scheduler startup log
+    </p>
+
+    <h3>Flow ของแต่ละ cycle</h3>
+    <p>
+      ทุก cycle ที่ strategy ถูก check, regime gate ทำงานก่อนส่ง signal:
+    </p>
+
+    <div class="gate-flow">
+      <div class="gf-step">check_*.py<br>คำนวณ signal</div>
+      <div class="gf-arrow">→</div>
+      <div class="gf-step step-regime">regime.py<br>คำนวณ ADX label</div>
+      <div class="gf-arrow">→</div>
+      <div class="gf-step">label ∈<br>allowed_regimes?</div>
+      <div class="gf-arrow">→</div>
+      <div class="gf-step step-blocked">NO → skip<br>ไม่เปิด trade</div>
+      <div class="gf-arrow" style="color:var(--positive);">→</div>
+      <div class="gf-step step-pass">YES → execute<br>เปิด trade ได้</div>
+    </div>
+
+    <div class="codebase-callout">
+      <h3>go-trader codebase</h3>
+      <p>
+        Regime label ถูกส่งเข้า Go scheduler ผ่าน JSON stdout ของ <code>check_*.py</code>
+        Go อ่านใน <code>scheduler/regime_atr.go</code> และเปรียบเทียบกับ <code>AllowedRegimes []string</code>
+        (config field <code>allowed_regimes</code> ใน <code>scheduler/config.go</code> บรรทัด 362)
+      </p>
+      <p>
+        กฎสำคัญ: <code>allowed_regimes</code> gate <strong>entries เท่านั้น</strong> — ถ้า position เปิดอยู่แล้ว
+        close จะยังทำงานตามปกติแม้ regime เปลี่ยน
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Section 5: กลับมาที่ fold 5 ── -->
+  <section class="lesson-section">
+    <h2>ทำไม Regime Gate ช่วย Fold 5 ได้</h2>
+
+    <p>
+      Fold 5 (Oct 2025 – Jan 2026) มี N=2 trades เท่านั้น — หมายความว่า
+      ถ้า <code>allowed_regimes: ["trending_up", "trending_down"]</code> เปิดใช้อยู่,
+      strategy <em>อาจ skip entries ทั้งหมดในช่วงนั้น</em> เพราะ ADX ต่ำกว่า 20 ตลอด
+    </p>
+
+    <p>
+      ผลลัพธ์คือ: แทนที่จะขาดทุน −10.1% จาก 2 trades ที่ whipsaw,
+      strategy จะไม่มี trades เลยในช่วงนั้น — equity ไม่เปลี่ยนแปลง
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">Insight สำคัญ</span>
+      <p style="font-size:var(--sm);color:var(--text);margin:0;line-height:1.65;">
+        "ไม่เข้า trade" อาจเป็น outcome ที่ดีที่สุดในบาง regime
+        Regime detection ไม่ได้หา edge ใหม่ — มันป้องกันไม่ให้ strategy
+        ทำงานในสภาวะที่มันไม่ได้ถูกออกแบบมาเพื่อ
+      </p>
+    </div>
+
+    <p>
+      แต่มีข้อแลกเปลี่ยน: การ filter ออก regime บางประเภทลด N trades รวม
+      ถ้า N ลดลงมากเกินไป ตัวเลข Sharpe จะไม่ reliable (กลับไป lesson 03!)
+      ต้องทดสอบว่า filtered backtest ยังมี N เพียงพอหรือไม่
+    </p>
+  </section>
+
+  <!-- ── Quiz ── -->
+  <section class="quiz-section">
+    <h2>ฝึกอ่าน ADX Regime</h2>
+    <p style="font-size:var(--sm);color:var(--text-muted);margin-bottom:1.25rem;line-height:1.6;">
+      กำหนด <code>adx_threshold = 20.0</code> ตาม go-trader default เลือก regime label ที่ถูกต้อง
+    </p>
+
+    <!-- Q1 -->
+    <div class="regime-quiz-card" id="q1">
+      <div class="question">Q1: ค่า ADX indicator ณ ปัจจุบันคือ:</div>
+      <div class="metrics-row">
+        <div class="metric-chip adx-low">
+          <span class="m-label">ADX</span>
+          <span class="m-val">8.3</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI+</span>
+          <span class="m-val">18.5</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI−</span>
+          <span class="m-val">12.1</span>
+        </div>
+      </div>
+      <div class="regime-options">
+        <button class="regime-btn btn-ranging" onclick="checkRegime('q1','ranging','ranging')">ranging</button>
+        <button class="regime-btn btn-up"      onclick="checkRegime('q1','trending_up','ranging')">trending_up</button>
+        <button class="regime-btn btn-down"    onclick="checkRegime('q1','trending_down','ranging')">trending_down</button>
+      </div>
+      <div id="q1-fb" class="regime-feedback" style="display:none;"></div>
+    </div>
+
+    <!-- Q2 -->
+    <div class="regime-quiz-card" id="q2">
+      <div class="question">Q2: ค่า ADX indicator ณ ปัจจุบันคือ:</div>
+      <div class="metrics-row">
+        <div class="metric-chip adx-high">
+          <span class="m-label">ADX</span>
+          <span class="m-val">31.2</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI+</span>
+          <span class="m-val">28.7</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI−</span>
+          <span class="m-val">14.3</span>
+        </div>
+      </div>
+      <div class="regime-options">
+        <button class="regime-btn btn-ranging" onclick="checkRegime('q2','ranging','trending_up')">ranging</button>
+        <button class="regime-btn btn-up"      onclick="checkRegime('q2','trending_up','trending_up')">trending_up</button>
+        <button class="regime-btn btn-down"    onclick="checkRegime('q2','trending_down','trending_up')">trending_down</button>
+      </div>
+      <div id="q2-fb" class="regime-feedback" style="display:none;"></div>
+    </div>
+
+    <!-- Q3 -->
+    <div class="regime-quiz-card" id="q3">
+      <div class="question">Q3: ค่า ADX indicator ณ ปัจจุบันคือ:</div>
+      <div class="metrics-row">
+        <div class="metric-chip adx-high">
+          <span class="m-label">ADX</span>
+          <span class="m-val">22.4</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI+</span>
+          <span class="m-val">11.0</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI−</span>
+          <span class="m-val">26.8</span>
+        </div>
+      </div>
+      <div class="regime-options">
+        <button class="regime-btn btn-ranging" onclick="checkRegime('q3','ranging','trending_down')">ranging</button>
+        <button class="regime-btn btn-up"      onclick="checkRegime('q3','trending_up','trending_down')">trending_up</button>
+        <button class="regime-btn btn-down"    onclick="checkRegime('q3','trending_down','trending_down')">trending_down</button>
+      </div>
+      <div id="q3-fb" class="regime-feedback" style="display:none;"></div>
+    </div>
+
+    <!-- Q4 (trap!) -->
+    <div class="regime-quiz-card" id="q4">
+      <div class="question">Q4: ค่า ADX indicator ณ ปัจจุบันคือ:</div>
+      <div class="metrics-row">
+        <div class="metric-chip adx-low">
+          <span class="m-label">ADX</span>
+          <span class="m-val">15.6</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI+</span>
+          <span class="m-val">22.3</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI−</span>
+          <span class="m-val">8.9</span>
+        </div>
+      </div>
+      <div class="regime-options">
+        <button class="regime-btn btn-ranging" onclick="checkRegime('q4','ranging','ranging')">ranging</button>
+        <button class="regime-btn btn-up"      onclick="checkRegime('q4','trending_up','ranging')">trending_up</button>
+        <button class="regime-btn btn-down"    onclick="checkRegime('q4','trending_down','ranging')">trending_down</button>
+      </div>
+      <div id="q4-fb" class="regime-feedback" style="display:none;"></div>
+    </div>
+
+    <!-- Q5 -->
+    <div class="regime-quiz-card" id="q5">
+      <div class="question">Q5: ค่า ADX indicator ณ ปัจจุบันคือ:</div>
+      <div class="metrics-row">
+        <div class="metric-chip adx-high">
+          <span class="m-label">ADX</span>
+          <span class="m-val">45.1</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI+</span>
+          <span class="m-val">19.2</span>
+        </div>
+        <div class="metric-chip">
+          <span class="m-label">DI−</span>
+          <span class="m-val">31.4</span>
+        </div>
+      </div>
+      <div class="regime-options">
+        <button class="regime-btn btn-ranging" onclick="checkRegime('q5','ranging','trending_down')">ranging</button>
+        <button class="regime-btn btn-up"      onclick="checkRegime('q5','trending_up','trending_down')">trending_up</button>
+        <button class="regime-btn btn-down"    onclick="checkRegime('q5','trending_down','trending_down')">trending_down</button>
+      </div>
+      <div id="q5-fb" class="regime-feedback" style="display:none;"></div>
+    </div>
+
+    <div id="score-display" class="score-display"></div>
+  </section>
+
+  <!-- ── Primary source ── -->
+  <section class="primary-source">
+    <h2>แหล่งอ้างอิงหลัก</h2>
+    <p>
+      <strong>Investopedia — Average Directional Index (ADX)</strong><br>
+      <a href="https://www.investopedia.com/terms/a/adx.asp" target="_blank" rel="noopener">investopedia.com/terms/a/adx.asp</a>
+    </p>
+    <p>
+      อธิบาย ADX, DI+, DI− พร้อมตัวอย่างการอ่านค่า และ Wilder's smoothing method
+      ที่ go-trader ใช้ใน <code>shared_strategies/open/adx_trend.py</code>
+    </p>
+    <p>
+      สำหรับ go-trader โดยตรง: อ่าน <code>shared_tools/regime.py</code> ฟังก์ชัน <code>compute_regime()</code>
+      และ <code>scheduler/config.go</code> struct <code>RegimeConfig</code> (บรรทัด 74–79)
+    </p>
+  </section>
+
+  <!-- ── Footer ── -->
+  <footer class="lesson-nav">
+    <div class="ask-teacher">
+      <p>
+        มีคำถามเพิ่มเติมไหม? ถาม agent ได้เลย —
+        เช่น "composite regime คืออะไร?" หรือ "ถ้า fold 5 มี ADX สูง แปลว่าอะไร?"
+      </p>
+    </div>
+    <div class="nav-next">
+      <a href="0004-overfitting.html">← Lesson 04: Overfitting</a>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+  const EXPLANATIONS = {
+    q1: {
+      correct: "ถูกต้อง — ADX 8.3 ต่ำกว่า threshold 20.0 ดังนั้น label = ranging ทันที ไม่ต้องดู DI+ DI−",
+      wrong: (ans, correct) => `ผิด — ADX 8.3 &lt; 20.0 → ranging ทันที (DI+ = 18.5, DI− = 12.1 ไม่มีผลเมื่อ ADX ต่ำ)`
+    },
+    q2: {
+      correct: "ถูกต้อง — ADX 31.2 ≥ 20.0, DI+ 28.7 > DI− 14.3 → trending_up",
+      wrong: (ans, correct) => `ผิด — ADX 31.2 ≥ threshold, DI+ 28.7 > DI− 14.3 → trending_up`
+    },
+    q3: {
+      correct: "ถูกต้อง — ADX 22.4 ≥ 20.0, DI− 26.8 > DI+ 11.0 → trending_down",
+      wrong: (ans, correct) => `ผิด — ADX 22.4 ≥ threshold, DI− 26.8 มากกว่า DI+ 11.0 → trending_down`
+    },
+    q4: {
+      correct: "ถูกต้อง! (กับดัก) — DI+ 22.3 สูงกว่า DI− 8.9 มาก แต่ ADX 15.6 &lt; 20.0 ดังนั้น ranging",
+      wrong: (ans, correct) => `กับดัก! — DI+ ดูสูงมาก แต่ ADX 15.6 &lt; threshold 20.0 → ranging ทันที DI ไม่มีผล`
+    },
+    q5: {
+      correct: "ถูกต้อง — ADX 45.1 สูงมาก (trend แรง), DI− 31.4 > DI+ 19.2 → trending_down",
+      wrong: (ans, correct) => `ผิด — ADX 45.1 ≥ threshold, DI− 31.4 > DI+ 19.2 → trending_down`
+    }
+  };
+
+  const answers = {};
+
+  function checkRegime(qId, chosen, correct) {
+    if (answers[qId]) return;
+    answers[qId] = chosen;
+
+    const card = document.getElementById(qId);
+    const fb = document.getElementById(qId + '-fb');
+    const btns = card.querySelectorAll('.regime-btn');
+
+    btns.forEach(b => b.disabled = true);
+
+    const isCorrect = chosen === correct;
+    const exp = EXPLANATIONS[qId];
+
+    fb.innerHTML = isCorrect
+      ? '✓ ' + exp.correct
+      : '✗ ' + exp.wrong(chosen, correct);
+
+    fb.className = 'regime-feedback ' + (isCorrect ? 'correct' : 'wrong');
+    fb.style.display = 'block';
+
+    // show score once all 5 answered
+    if (Object.keys(answers).length === 5) {
+      const score = Object.entries(answers)
+        .filter(([q,a]) => {
+          const corrects = {q1:'ranging',q2:'trending_up',q3:'trending_down',q4:'ranging',q5:'trending_down'};
+          return a === corrects[q];
+        }).length;
+      const disp = document.getElementById('score-display');
+      disp.style.display = 'block';
+      if (score === 5) {
+        disp.textContent = `คะแนน ${score}/5 — เยี่ยมมาก! ADX classification ชัดเจนแล้ว`;
+        disp.style.color = 'var(--positive)';
+      } else if (score >= 3) {
+        disp.textContent = `คะแนน ${score}/5 — ดี แต่ลองอ่าน gฎ "ตรวจ ADX ก่อน" อีกครั้ง`;
+        disp.style.color = 'var(--accent)';
+      } else {
+        disp.textContent = `คะแนน ${score}/5 — อ่าน decision tree ด้านบนอีกครั้ง แล้วถาม agent`;
+        disp.style.color = 'var(--negative)';
+      }
+    }
+  }
+</script>
+</body>
+</html>
