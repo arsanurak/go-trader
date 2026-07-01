@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>บทเรียนที่ 06 — ATR และ Position Sizing</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    .code-block {
+      background: #1A2332; color: #C8D8E8; border-radius: 4px;
+      padding: 1.25rem 1.5rem; margin: 1.25rem 0;
+      font-family: var(--font-mono); font-size: var(--xs);
+      line-height: 1.8; overflow-x: auto;
+    }
+    .code-block .c-key  { color: #8BB8D4; }
+    .code-block .c-str  { color: #A8D8A8; }
+    .code-block .c-num  { color: #E8C87A; }
+    .code-block .c-cmt  { color: #5A7A8A; font-style: italic; }
+    .code-block .c-hi   { background: rgba(201,163,72,0.18); border-radius: 2px; padding: 0 0.15em; }
+
+    /* True Range table */
+    .tr-table {
+      width: 100%; border-collapse: collapse;
+      font-size: var(--sm); font-family: var(--font-mono); margin: 1rem 0;
+    }
+    .tr-table th {
+      text-align: center; font-weight: 600; color: var(--text-muted);
+      padding: 0.375rem 0.5rem; border-bottom: 2px solid var(--border);
+      font-size: var(--xs); letter-spacing: 0.05em; text-transform: uppercase;
+      font-family: var(--font-body); white-space: nowrap;
+    }
+    .tr-table td {
+      padding: 0.4rem 0.5rem; color: var(--text);
+      border-bottom: 1px solid var(--border); text-align: center;
+    }
+    .tr-table tr:last-child td { border-bottom: none; }
+    .tr-table .tr-val { color: var(--signal); font-weight: 600; }
+    .tr-table .atr-row td {
+      border-top: 2px solid var(--border);
+      font-weight: 600; color: var(--accent);
+    }
+
+    /* Calculator */
+    .calc-panel {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 4px; padding: 1.5rem 1.75rem; margin: 1.5rem 0;
+    }
+    .calc-panel h3 {
+      font-size: var(--xs); font-weight: 600; letter-spacing: 0.07em;
+      text-transform: uppercase; color: var(--text-muted);
+      margin-top: 0; margin-bottom: 1.25rem;
+    }
+    .calc-inputs {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 1rem 2rem; margin-bottom: 1.5rem;
+    }
+    @media (max-width: 560px) { .calc-inputs { grid-template-columns: 1fr; } }
+    .calc-field { display: flex; flex-direction: column; gap: 0.375rem; }
+    .calc-field label {
+      font-size: var(--xs); font-weight: 600; letter-spacing: 0.05em;
+      color: var(--text-muted); text-transform: uppercase;
+    }
+    .calc-field .field-row { display: flex; align-items: center; gap: 0.5rem; }
+    .calc-field input[type="range"] { flex: 1; accent-color: var(--signal); height: 4px; }
+    .calc-field .field-val {
+      font-family: var(--font-mono); font-size: var(--sm); font-weight: 600;
+      color: var(--text); min-width: 5.5rem; text-align: right;
+    }
+    .calc-outputs {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem;
+    }
+    @media (max-width: 560px) { .calc-outputs { grid-template-columns: 1fr 1fr; } }
+    .calc-output {
+      background: var(--ground); border: 1px solid var(--border);
+      border-radius: 3px; padding: 0.75rem;
+    }
+    .calc-output .out-label {
+      font-size: var(--xs); color: var(--text-muted); font-weight: 600;
+      letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 0.25rem;
+    }
+    .calc-output .out-val { font-family: var(--font-mono); font-size: var(--base); font-weight: 600; color: var(--text); }
+    .calc-output.out-stop-long  .out-val { color: var(--negative); }
+    .calc-output.out-stop-short .out-val { color: var(--positive); }
+    .calc-output.out-size .out-val { color: var(--signal); }
+    .calc-output.out-risk .out-val { color: var(--accent); }
+
+    /* Quiz */
+    .num-quiz-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 3px; padding: 1.25rem 1.5rem; margin-bottom: 1rem;
+    }
+    .num-quiz-card .question {
+      font-size: var(--base); font-weight: 600; color: var(--text);
+      margin-bottom: 0.625rem; line-height: 1.45;
+    }
+    .given-values { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.875rem; }
+    .given-chip {
+      background: var(--ground); border: 1px solid var(--border);
+      border-radius: 3px; padding: 0.3rem 0.625rem;
+      font-family: var(--font-mono); font-size: var(--sm);
+    }
+    .given-chip .gc-label { font-size: var(--xs); color: var(--text-muted); display: block; line-height: 1.2; }
+    .given-chip .gc-val { font-weight: 600; color: var(--text); }
+    .num-options { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .num-btn {
+      border: 1.5px solid var(--border); border-radius: 3px;
+      padding: 0.4rem 0.875rem; font-family: var(--font-mono);
+      font-size: var(--sm); font-weight: 600; cursor: pointer;
+      background: var(--ground); color: var(--text);
+      transition: border-color 0.1s, background-color 0.1s;
+    }
+    .num-btn:hover:not(:disabled) { background: var(--surface-2); }
+    .num-btn:disabled { opacity: 0.6; cursor: default; }
+    .num-feedback {
+      font-size: var(--sm); margin-top: 0.625rem;
+      padding: 0.625rem 0.875rem; border-radius: 3px; line-height: 1.55;
+    }
+    .num-feedback.correct {
+      background: rgba(46,125,82,0.09); border: 1px solid rgba(46,125,82,0.25); color: #1D5235;
+    }
+    .num-feedback.wrong {
+      background: rgba(192,57,43,0.08); border: 1px solid rgba(192,57,43,0.2); color: #7A1D14;
+    }
+    .score-display {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 3px;
+      padding: 1rem 1.5rem; margin-top: 1rem; text-align: center;
+      font-size: var(--lg); font-weight: 600; color: var(--text); display: none;
+    }
+  </style>
+</head>
+<body>
+<div class="lesson-wrap">
+
+  <!-- Header -->
+  <header class="lesson-header">
+    <div class="lesson-meta">
+      <span class="course-label">Quant Trading</span>
+      <span class="lesson-label">บทเรียนที่ 06 จาก 12</span>
+    </div>
+    <h1 class="lesson-title">ATR และ<br>Position Sizing</h1>
+    <p class="lesson-thesis">
+      ทุก stop loss ใน go-trader คำนวณจาก ATR — ไม่ใช่ % ตายตัว
+      เรียนรู้ว่า ATR วัดอะไร, <code>stop_loss_atr_mult</code> แปลงเป็น price level อย่างไร
+      และทำไม position size ต้อง<em>ลดลงเมื่อตลาด volatile</em> เพื่อรักษา dollar risk ให้คงที่
+    </p>
+  </header>
+
+  <!-- Objectives -->
+  <section class="objectives">
+    <h2>จะเรียนรู้อะไรใน Lesson นี้</h2>
+    <ol>
+      <li>คำนวณ stop loss price จาก entry price, ATR, และ <code>stop_loss_atr_mult</code></li>
+      <li>อธิบายได้ว่าทำไม ATR-based stop ดีกว่า fixed % stop</li>
+      <li>คำนวณ position size จาก capital, risk %, และ stop distance</li>
+    </ol>
+  </section>
+
+  <!-- Hero canvas -->
+  <figure class="hero-figure">
+    <canvas id="heroCanvas" height="210"></canvas>
+    <figcaption>
+      <span class="fig-a">เส้นสีน้ำเงิน</span> = price,
+      <span class="fig-b">เส้นสีทอง</span> = entry,
+      เส้นสีแดง = stop loss = entry − (ATR × mult) — ระยะปรับตาม volatility อัตโนมัติ
+    </figcaption>
+  </figure>
+
+  <!-- Section 1: ATR -->
+  <section class="lesson-section">
+    <h2>ATR คืออะไร</h2>
+
+    <p>
+      <strong>ATR (Average True Range)</strong> วัด <em>ความ volatile ของ market</em>
+      โดยดูว่าแต่ละ bar มีช่วงราคากว้างแค่ไหนโดยเฉลี่ย
+      ค่าสูง = market กระตุกมาก, ค่าต่ำ = market นิ่ง
+    </p>
+
+    <p>
+      คำนวณจาก <strong>True Range (TR)</strong> ของแต่ละ bar — เลือกค่ามากที่สุดในสามกรณีนี้:
+    </p>
+
+    <div class="formula">TR = max( High − Low,  |High − Close_prev|,  |Low − Close_prev| )</div>
+
+    <p>
+      กรณีที่สองและสามรับมือกับ <em>gap</em> — เช่น bar เปิดสูงกว่า close ก่อนหน้ามาก
+      จากนั้น ATR = Wilder's smoothed average ของ TR ย้อนหลัง N bars (default = 14)
+    </p>
+
+    <h3>ตัวอย่าง: คำนวณ TR ของ 5 bars แล้วหา ATR</h3>
+
+    <div style="overflow-x:auto;">
+    <table class="tr-table">
+      <thead>
+        <tr>
+          <th>Bar</th><th>High</th><th>Low</th><th>Close_prev</th>
+          <th>H−L</th><th>|H−Cp|</th><th>|L−Cp|</th><th>TR</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>91,200</td><td>89,500</td><td>90,100</td><td>1,700</td><td>1,100</td><td>600</td><td class="tr-val">1,700</td></tr>
+        <tr><td>2</td><td>92,400</td><td>90,800</td><td>91,200</td><td>1,600</td><td>1,200</td><td>400</td><td class="tr-val">1,600</td></tr>
+        <tr><td>3</td><td>93,100</td><td>91,000</td><td>92,400</td><td>2,100</td><td>700</td><td>1,400</td><td class="tr-val">2,100</td></tr>
+        <tr><td>4</td><td>92,800</td><td>91,600</td><td>93,100</td><td>1,200</td><td>300</td><td>1,500</td><td class="tr-val">1,500</td></tr>
+        <tr><td>5</td><td>94,000</td><td>92,200</td><td>92,800</td><td>1,800</td><td>1,200</td><td>600</td><td class="tr-val">1,800</td></tr>
+        <tr class="atr-row">
+          <td colspan="7" style="text-align:right;font-family:var(--font-body);">ATR (avg ของ 5 bars) =</td>
+          <td>1,740</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      ATR = $1,740 หมายความว่า BTC เคลื่อนที่ประมาณ <strong>$1,740 ต่อ bar</strong> โดยเฉลี่ย
+      นี่คือ "ลมหายใจ" ของ market — ระยะที่ราคาสามารถขยับได้จากสัญญาณรบกวนปกติ
+    </p>
+
+    <div class="codebase-callout">
+      <h3>go-trader codebase</h3>
+      <p>
+        ATR คำนวณใน <code>shared_tools/atr.py</code> ฟังก์ชัน <code>standard_atr(df, period=14)</code>
+        ใช้ Wilder's smoothing เหมือนกับ ADX ใน Lesson 05
+        ATR ณ วันที่เปิด trade ถูก save ไว้ใน <code>Position.EntryATR</code> โดย
+        <code>stampEntryATRIfOpened()</code> เพื่อใช้คำนวณ stop ตลอดอายุ position
+      </p>
+      <p>
+        <strong>guard สำคัญ:</strong> <code>stampEntryATRIfOpened</code> rejects ATR ที่มากกว่า 50% ของ AvgCost
+        (เพื่อป้องกัน data error — ATR ไม่ควรใหญ่กว่าครึ่งนึงของ entry price)
+      </p>
+    </div>
+  </section>
+
+  <!-- Section 2: ATR → Stop Loss -->
+  <section class="lesson-section">
+    <h2>คำนวณ Stop Loss จาก ATR</h2>
+
+    <p>เมื่อรู้ ATR แล้ว stop loss price คำนวณได้ตรงๆ:</p>
+
+    <div class="formula">Long:  stop_price = entry_price − (ATR × stop_loss_atr_mult)
+Short: stop_price = entry_price + (ATR × stop_loss_atr_mult)</div>
+
+    <h3>ตัวอย่าง — BTC entry = $90,000, ATR = $1,740, mult = 1.5</h3>
+
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>ทิศทาง</th><th>คำนวณ</th><th>Stop Price</th><th>ห่างจาก Entry</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>LONG</td>
+          <td class="mono">90,000 − (1,740 × 1.5)</td>
+          <td class="neg">$87,390</td>
+          <td class="mono">$2,610 (2.90%)</td>
+        </tr>
+        <tr>
+          <td>SHORT</td>
+          <td class="mono">90,000 + (1,740 × 1.5)</td>
+          <td class="pos">$92,610</td>
+          <td class="mono">$2,610 (2.90%)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="key-insight">
+      <span class="key-insight-label">ทำไมต้อง ATR ไม่ใช่ fixed %</span>
+      <p style="font-size:var(--sm);color:var(--text);margin:0;line-height:1.65;">
+        ถ้าใช้ fixed 3% stop — ในวันที่ตลาด calm (ATR = $900)
+        stop กว้างกว่า ATR ถึง 3× ซึ่งมากเกินความจำเป็น
+        ในวันที่ตลาด volatile (ATR = $3,500) stop 3% แคบเกินไป — ถูก noise หยุดออก
+        ATR-based stop ปรับตาม "ลมหายใจ" ของ market อัตโนมัติ
+      </p>
+    </div>
+
+    <div class="codebase-callout">
+      <h3>go-trader codebase</h3>
+      <p>
+        <code>stop_loss_atr_mult</code> คือ config field ใน <code>scheduler/config.go</code>
+        — หนึ่งในเจ็ด mutually-exclusive stop fields (ดู ARCHITECTURE.md § Stop Loss Priority)
+        ฟังก์ชัน <code>EffectiveStopLossPct(sc StrategyConfig)</code> แปลง mult เป็น %
+        โดยใช้ <code>Position.EntryATR / Position.AvgCost</code>
+      </p>
+      <p>
+        <code>scheduler/hyperliquid_protection.go</code> ใช้ค่านี้วาง reduce-only stop order
+        บน Hyperliquid — ทุกครั้งที่มีการ sync position
+      </p>
+    </div>
+  </section>
+
+  <!-- Section 3: Position Sizing -->
+  <section class="lesson-section">
+    <h2>Position Sizing — เปิด trade ขนาดไหน</h2>
+
+    <p>
+      รู้ stop distance แล้ว คำถามถัดมาคือ: <em>เปิด trade ขนาดเท่าไหร่?</em>
+      หลักการคือ กำหนด <strong>dollar risk ต่อ trade</strong> ก่อน แล้วคำนวณ position size ย้อนกลับ:
+    </p>
+
+    <div class="formula">dollar_risk   = capital × risk_fraction
+position_size = dollar_risk ÷ stop_distance</div>
+
+    <h3>ตัวอย่าง — capital = $10,000, risk = 1%, ATR = $1,740, mult = 1.5</h3>
+
+    <table class="data-table">
+      <thead>
+        <tr><th>ขั้นตอน</th><th>คำนวณ</th><th>ผลลัพธ์</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1. Dollar Risk</td><td class="mono">$10,000 × 1%</td><td class="mono">$100</td></tr>
+        <tr><td>2. Stop Distance</td><td class="mono">$1,740 × 1.5</td><td class="mono">$2,610 ต่อ BTC</td></tr>
+        <tr><td>3. Position Size</td><td class="mono">$100 ÷ $2,610</td><td class="mono pos">0.0383 BTC</td></tr>
+        <tr class="sum-row"><td>4. Position Value</td><td class="mono">0.0383 × $90,000</td><td class="mono">$3,448</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      เปิด position ขนาด $3,448 (34% ของ capital) —
+      ถ้า stop hit จะขาดทุน <strong>$100 พอดี</strong> = 1% ของ capital
+    </p>
+
+    <div class="key-insight">
+      <span class="key-insight-label">ATR สูงขึ้น → Position เล็กลง — dollar risk คงที่</span>
+      <p style="font-size:var(--sm);color:var(--text);margin:0;line-height:1.65;">
+        ถ้า ATR เพิ่มจาก $1,740 เป็น $3,480 (market volatile ขึ้น 2×):
+        stop distance เพิ่มขึ้น 2× → position size ลดลง 50% — แต่ dollar risk ยังเท่าเดิม: $100 เสมอ
+        นี่คือหัวใจของ ATR-based sizing: เล็กลงเมื่อตลาดอันตราย, ใหญ่ขึ้นได้เมื่อตลาดนิ่ง
+      </p>
+    </div>
+  </section>
+
+  <!-- Interactive Calculator -->
+  <section class="lesson-section">
+    <h2>ทดลองคำนวณ</h2>
+    <p>ปรับ slider ด้านล่าง — ผลลัพธ์อัปเดตทันที:</p>
+
+    <div class="calc-panel">
+      <h3>ค่าที่กำหนด</h3>
+      <div class="calc-inputs">
+        <div class="calc-field">
+          <label>Entry Price</label>
+          <div class="field-row">
+            <input type="range" id="r-entry" min="10000" max="100000" step="1000" value="90000">
+            <span class="field-val" id="v-entry">$90,000</span>
+          </div>
+        </div>
+        <div class="calc-field">
+          <label>ATR</label>
+          <div class="field-row">
+            <input type="range" id="r-atr" min="100" max="6000" step="50" value="1740">
+            <span class="field-val" id="v-atr">$1,740</span>
+          </div>
+        </div>
+        <div class="calc-field">
+          <label>stop_loss_atr_mult</label>
+          <div class="field-row">
+            <input type="range" id="r-mult" min="0.5" max="3.0" step="0.1" value="1.5">
+            <span class="field-val" id="v-mult">1.5×</span>
+          </div>
+        </div>
+        <div class="calc-field">
+          <label>Capital</label>
+          <div class="field-row">
+            <input type="range" id="r-capital" min="1000" max="50000" step="500" value="10000">
+            <span class="field-val" id="v-capital">$10,000</span>
+          </div>
+        </div>
+        <div class="calc-field">
+          <label>Risk per trade (%)</label>
+          <div class="field-row">
+            <input type="range" id="r-risk" min="0.25" max="5.0" step="0.25" value="1.0">
+            <span class="field-val" id="v-risk">1.00%</span>
+          </div>
+        </div>
+      </div>
+
+      <h3>ผลลัพธ์</h3>
+      <div class="calc-outputs">
+        <div class="calc-output out-stop-long">
+          <span class="out-label">Stop (Long)</span>
+          <span class="out-val" id="o-stop-long">—</span>
+        </div>
+        <div class="calc-output out-stop-short">
+          <span class="out-label">Stop (Short)</span>
+          <span class="out-val" id="o-stop-short">—</span>
+        </div>
+        <div class="calc-output">
+          <span class="out-label">Stop Distance</span>
+          <span class="out-val" id="o-stop-dist">—</span>
+        </div>
+        <div class="calc-output">
+          <span class="out-label">Stop %</span>
+          <span class="out-val" id="o-stop-pct">—</span>
+        </div>
+        <div class="calc-output out-size">
+          <span class="out-label">Position Size</span>
+          <span class="out-val" id="o-size">—</span>
+        </div>
+        <div class="calc-output out-risk">
+          <span class="out-label">Dollar Risk</span>
+          <span class="out-val" id="o-dollar-risk">—</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Quiz -->
+  <section class="quiz-section">
+    <h2>ฝึกคำนวณ ATR Stop Sizing</h2>
+    <p style="font-size:var(--sm);color:var(--text-muted);margin-bottom:1.25rem;line-height:1.6;">
+      สูตร: <code>stop (long) = entry − ATR×mult</code> &nbsp;|&nbsp;
+      <code>stop (short) = entry + ATR×mult</code> &nbsp;|&nbsp;
+      <code>position = dollar_risk ÷ stop_dist</code>
+    </p>
+
+    <!-- Q1 -->
+    <div class="num-quiz-card" id="q1">
+      <div class="question">Q1: BTC LONG — stop loss price อยู่ที่เท่าไหร่?</div>
+      <div class="given-values">
+        <div class="given-chip"><span class="gc-label">Entry</span><span class="gc-val">$90,000</span></div>
+        <div class="given-chip"><span class="gc-label">ATR</span><span class="gc-val">$3,000</span></div>
+        <div class="given-chip"><span class="gc-label">mult</span><span class="gc-val">1.0×</span></div>
+      </div>
+      <div class="num-options">
+        <button class="num-btn" onclick="checkNum('q1','$87,000','$87,000')">$87,000</button>
+        <button class="num-btn" onclick="checkNum('q1','$88,000','$87,000')">$88,000</button>
+        <button class="num-btn" onclick="checkNum('q1','$86,000','$87,000')">$86,000</button>
+        <button class="num-btn" onclick="checkNum('q1','$93,000','$87,000')">$93,000</button>
+      </div>
+      <div id="q1-fb" class="num-feedback" style="display:none;"></div>
+    </div>
+
+    <!-- Q2 -->
+    <div class="num-quiz-card" id="q2">
+      <div class="question">Q2: BTC SHORT — stop loss price อยู่ที่เท่าไหร่?</div>
+      <div class="given-values">
+        <div class="given-chip"><span class="gc-label">Entry</span><span class="gc-val">$90,000</span></div>
+        <div class="given-chip"><span class="gc-label">ATR</span><span class="gc-val">$2,500</span></div>
+        <div class="given-chip"><span class="gc-label">mult</span><span class="gc-val">2.0×</span></div>
+      </div>
+      <div class="num-options">
+        <button class="num-btn" onclick="checkNum('q2','$85,000','$95,000')">$85,000</button>
+        <button class="num-btn" onclick="checkNum('q2','$92,500','$95,000')">$92,500</button>
+        <button class="num-btn" onclick="checkNum('q2','$95,000','$95,000')">$95,000</button>
+        <button class="num-btn" onclick="checkNum('q2','$97,500','$95,000')">$97,500</button>
+      </div>
+      <div id="q2-fb" class="num-feedback" style="display:none;"></div>
+    </div>
+
+    <!-- Q3 -->
+    <div class="num-quiz-card" id="q3">
+      <div class="question">Q3: Position size (ใน BTC) เท่าไหร่?</div>
+      <div class="given-values">
+        <div class="given-chip"><span class="gc-label">Capital</span><span class="gc-val">$5,000</span></div>
+        <div class="given-chip"><span class="gc-label">Risk</span><span class="gc-val">1%</span></div>
+        <div class="given-chip"><span class="gc-label">Stop Dist</span><span class="gc-val">$500/BTC</span></div>
+      </div>
+      <div class="num-options">
+        <button class="num-btn" onclick="checkNum('q3','0.01 BTC','0.10 BTC')">0.01 BTC</button>
+        <button class="num-btn" onclick="checkNum('q3','0.10 BTC','0.10 BTC')">0.10 BTC</button>
+        <button class="num-btn" onclick="checkNum('q3','0.50 BTC','0.10 BTC')">0.50 BTC</button>
+        <button class="num-btn" onclick="checkNum('q3','1.00 BTC','0.10 BTC')">1.00 BTC</button>
+      </div>
+      <div id="q3-fb" class="num-feedback" style="display:none;"></div>
+    </div>
+
+    <!-- Q4 (trap) -->
+    <div class="num-quiz-card" id="q4">
+      <div class="question">Q4: ATR เพิ่มขึ้น 2× (mult, capital, risk % เท่าเดิม) — position size เปลี่ยนอย่างไร?</div>
+      <div class="num-options">
+        <button class="num-btn" onclick="checkNum('q4','ลดลง 50%','ลดลง 50%')">ลดลง 50%</button>
+        <button class="num-btn" onclick="checkNum('q4','เพิ่มขึ้น 2×','ลดลง 50%')">เพิ่มขึ้น 2×</button>
+        <button class="num-btn" onclick="checkNum('q4','ไม่เปลี่ยน','ลดลง 50%')">ไม่เปลี่ยน</button>
+        <button class="num-btn" onclick="checkNum('q4','ลดลง 25%','ลดลง 50%')">ลดลง 25%</button>
+      </div>
+      <div id="q4-fb" class="num-feedback" style="display:none;"></div>
+    </div>
+
+    <!-- Q5 -->
+    <div class="num-quiz-card" id="q5">
+      <div class="question">Q5: Stop % ห่างจาก entry เท่าไหร่?</div>
+      <div class="given-values">
+        <div class="given-chip"><span class="gc-label">Entry</span><span class="gc-val">$80,000</span></div>
+        <div class="given-chip"><span class="gc-label">ATR</span><span class="gc-val">$2,000</span></div>
+        <div class="given-chip"><span class="gc-label">mult</span><span class="gc-val">1.5×</span></div>
+      </div>
+      <div class="num-options">
+        <button class="num-btn" onclick="checkNum('q5','1.88%','3.75%')">1.88%</button>
+        <button class="num-btn" onclick="checkNum('q5','2.50%','3.75%')">2.50%</button>
+        <button class="num-btn" onclick="checkNum('q5','3.75%','3.75%')">3.75%</button>
+        <button class="num-btn" onclick="checkNum('q5','5.00%','3.75%')">5.00%</button>
+      </div>
+      <div id="q5-fb" class="num-feedback" style="display:none;"></div>
+    </div>
+
+    <div id="score-display" class="score-display"></div>
+  </section>
+
+  <!-- Primary source -->
+  <section class="primary-source">
+    <h2>แหล่งอ้างอิงหลัก</h2>
+    <p>
+      <strong>Investopedia — Average True Range (ATR)</strong><br>
+      <a href="https://www.investopedia.com/terms/a/atr.asp" target="_blank" rel="noopener">investopedia.com/terms/a/atr.asp</a>
+    </p>
+    <p>
+      อธิบาย True Range, Wilder's smoothing, และการอ่านค่า ATR —
+      ตรงกับ implementation ใน <code>shared_tools/atr.py</code>
+    </p>
+    <p>
+      สำหรับ go-trader โดยตรง: ค้นหา <code>StopLossATRMult</code> ใน <code>scheduler/config.go</code>
+      และ <code>EffectiveStopLossPct</code> ใน <code>scheduler/hyperliquid_protection.go</code>
+    </p>
+  </section>
+
+  <!-- Footer -->
+  <footer class="lesson-nav">
+    <div class="ask-teacher">
+      <p>
+        มีคำถามไหม? ถาม agent ได้เลย —
+        เช่น "trailing stop ATR คืออะไร?" หรือ "ถ้า scale_in ใส่เพิ่ม stop เปลี่ยนไปไหม?"
+      </p>
+    </div>
+    <div class="nav-next">
+      <a href="0005-regime-detection.html">← Lesson 05: Regime Detection</a>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+/* ── Hero canvas ── */
+(function () {
+  const canvas = document.getElementById('heroCanvas');
+  const DPR = window.devicePixelRatio || 1;
+  const W = Math.min(canvas.parentElement.clientWidth || 700, 700);
+  const H = 210;
+  canvas.width  = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(DPR, DPR);
+
+  const PAD = { l: 46, r: 140, t: 22, b: 30 };
+  const CW = W - PAD.l - PAD.r;
+  const CH = H - PAD.t - PAD.b;
+
+  const prices = [
+    87200, 88500, 89100, 88700, 90300, 91800, 91200, 92500,
+    93400, 92100, 93700, 95200, 94500, 93900, 95100, 96000
+  ];
+  const N = prices.length;
+  const minP = 85500, maxP = 98500;
+  const toY = p => PAD.t + CH * (1 - (p - minP) / (maxP - minP));
+  const toX = i => PAD.l + CW * i / (N - 1);
+
+  /* grid lines */
+  ctx.strokeStyle = 'rgba(26,35,50,0.08)';
+  ctx.lineWidth = 1;
+  [88000, 90000, 92000, 94000, 96000].forEach(p => {
+    ctx.beginPath(); ctx.moveTo(PAD.l, toY(p)); ctx.lineTo(W - PAD.r, toY(p)); ctx.stroke();
+  });
+
+  /* price line */
+  ctx.beginPath();
+  ctx.moveTo(toX(0), toY(prices[0]));
+  prices.forEach((p, i) => ctx.lineTo(toX(i), toY(p)));
+  ctx.strokeStyle = 'rgba(61,107,142,0.65)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  /* entry & stop */
+  const entryP = prices[N - 1]; /* 96,000 */
+  const ATR = 1740, MULT = 1.5;
+  const stopP = entryP - ATR * MULT; /* 93,390 */
+
+  /* entry dot */
+  ctx.beginPath();
+  ctx.arc(toX(N - 1), toY(entryP), 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#C9A348'; ctx.fill();
+
+  /* entry dashed line */
+  ctx.setLineDash([5, 5]);
+  ctx.strokeStyle = 'rgba(201,163,72,0.7)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(PAD.l, toY(entryP)); ctx.lineTo(W - PAD.r, toY(entryP)); ctx.stroke();
+
+  /* stop dashed line */
+  ctx.strokeStyle = 'rgba(192,57,43,0.65)';
+  ctx.beginPath(); ctx.moveTo(PAD.l, toY(stopP)); ctx.lineTo(W - PAD.r, toY(stopP)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  /* bracket */
+  const bx = W - PAD.r + 6;
+  ctx.strokeStyle = 'rgba(26,35,50,0.3)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(bx, toY(entryP)); ctx.lineTo(bx + 7, toY(entryP));
+  ctx.lineTo(bx + 7, toY(stopP));
+  ctx.moveTo(bx + 7, toY(stopP)); ctx.lineTo(bx, toY(stopP));
+  ctx.stroke();
+
+  /* labels */
+  ctx.font = "500 11px 'JetBrains Mono',monospace";
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#C9A348';
+  ctx.fillText('Entry $96,000', bx + 12, toY(entryP) - 3);
+  ctx.fillStyle = '#C0392B';
+  ctx.fillText('Stop $93,390', bx + 12, toY(stopP) + 12);
+  ctx.fillStyle = '#5A6B7E';
+  ctx.fillText('ATR×1.5=$2,610', bx + 12, (toY(entryP) + toY(stopP)) / 2 + 4);
+
+  /* y-axis */
+  ctx.textAlign = 'right'; ctx.font = "400 10px 'JetBrains Mono',monospace";
+  ctx.fillStyle = '#8596A8';
+  [88000, 90000, 92000, 94000, 96000].forEach(p => {
+    ctx.fillText('$' + (p / 1000).toFixed(0) + 'k', PAD.l - 6, toY(p) + 3.5);
+  });
+})();
+
+/* ── Calculator ── */
+function updateCalc() {
+  const entry   = +document.getElementById('r-entry').value;
+  const atr     = +document.getElementById('r-atr').value;
+  const mult    = +document.getElementById('r-mult').value;
+  const capital = +document.getElementById('r-capital').value;
+  const riskPct = +document.getElementById('r-risk').value;
+
+  const fmt = (n, d = 0) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+  document.getElementById('v-entry').textContent   = fmt(entry);
+  document.getElementById('v-atr').textContent     = fmt(atr);
+  document.getElementById('v-mult').textContent    = mult.toFixed(1) + '×';
+  document.getElementById('v-capital').textContent = fmt(capital);
+  document.getElementById('v-risk').textContent    = riskPct.toFixed(2) + '%';
+
+  const stopDist  = atr * mult;
+  const stopLong  = entry - stopDist;
+  const stopShort = entry + stopDist;
+  const stopPct   = stopDist / entry * 100;
+  const dollarRisk = capital * riskPct / 100;
+  const posSize   = dollarRisk / stopDist;
+
+  document.getElementById('o-stop-long').textContent  = fmt(Math.round(stopLong));
+  document.getElementById('o-stop-short').textContent = fmt(Math.round(stopShort));
+  document.getElementById('o-stop-dist').textContent  = fmt(Math.round(stopDist));
+  document.getElementById('o-stop-pct').textContent   = stopPct.toFixed(2) + '%';
+  document.getElementById('o-size').textContent       = posSize.toFixed(4) + ' BTC';
+  document.getElementById('o-dollar-risk').textContent = fmt(dollarRisk, 2);
+}
+
+document.querySelectorAll('input[type="range"]').forEach(r => r.addEventListener('input', updateCalc));
+updateCalc();
+
+/* ── Quiz ── */
+const QUIZ_EXP = {
+  q1: {
+    c: 'ถูกต้อง — Long stop = 90,000 − (3,000 × 1.0) = $87,000',
+    w: 'ผิด — Long stop = entry − (ATR × mult) = 90,000 − 3,000 = $87,000'
+  },
+  q2: {
+    c: 'ถูกต้อง — Short stop = 90,000 + (2,500 × 2.0) = 90,000 + 5,000 = $95,000',
+    w: 'ผิด — Short stop = entry + (ATR × mult) = 90,000 + 5,000 = $95,000'
+  },
+  q3: {
+    c: 'ถูกต้อง — dollar_risk = $5,000 × 1% = $50; position = $50 ÷ $500 = 0.10 BTC',
+    w: 'ผิด — dollar_risk = $5,000 × 1% = $50; position = $50 ÷ $500 = 0.10 BTC'
+  },
+  q4: {
+    c: 'ถูกต้อง — ATR ×2 → stop_dist ×2 → position = dollar_risk ÷ (2×stop_dist) = ลดลง 50%; dollar risk ยังเท่าเดิม',
+    w: 'ผิด — position = dollar_risk ÷ stop_dist; stop_dist เพิ่ม 2× → position ลดลง 50% (dollar_risk ไม่เปลี่ยน)'
+  },
+  q5: {
+    c: 'ถูกต้อง — stop_dist = 2,000 × 1.5 = $3,000; stop% = 3,000 ÷ 80,000 = 3.75%',
+    w: 'ผิด — stop_dist = ATR × mult = $3,000; stop% = 3,000 ÷ 80,000 = 3.75%'
+  }
+};
+
+const CORRECTS = { q1:'$87,000', q2:'$95,000', q3:'0.10 BTC', q4:'ลดลง 50%', q5:'3.75%' };
+const quizAnswers = {};
+
+function checkNum(qId, chosen, correct) {
+  if (quizAnswers[qId]) return;
+  quizAnswers[qId] = chosen;
+  const card = document.getElementById(qId);
+  const fb   = document.getElementById(qId + '-fb');
+  card.querySelectorAll('.num-btn').forEach(b => b.disabled = true);
+  const isOK = chosen === correct;
+  fb.innerHTML     = (isOK ? '✓ ' : '✗ ') + (isOK ? QUIZ_EXP[qId].c : QUIZ_EXP[qId].w);
+  fb.className     = 'num-feedback ' + (isOK ? 'correct' : 'wrong');
+  fb.style.display = 'block';
+
+  if (Object.keys(quizAnswers).length === 5) {
+    const score = Object.entries(quizAnswers).filter(([q, a]) => a === CORRECTS[q]).length;
+    const disp = document.getElementById('score-display');
+    disp.style.display = 'block';
+    if (score === 5) {
+      disp.textContent = `คะแนน ${score}/5 — ATR sizing เข้าใจดีแล้ว`;
+      disp.style.color = 'var(--positive)';
+    } else if (score >= 3) {
+      disp.textContent = `คะแนน ${score}/5 — ดี ลองปรับ calculator แล้วสังเกตว่า position เปลี่ยนตาม ATR อย่างไร`;
+      disp.style.color = 'var(--accent)';
+    } else {
+      disp.textContent = `คะแนน ${score}/5 — ลองเล่น calculator ก่อน แล้วทำ quiz อีกครั้ง`;
+      disp.style.color = 'var(--negative)';
+    }
+  }
+}
+</script>
+</body>
+</html>
